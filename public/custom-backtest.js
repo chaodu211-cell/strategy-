@@ -18,7 +18,7 @@
   const number=x=>Number.isFinite(x)?Number(x.toFixed(6)).toString():'—';
   const FINANCING_RATE=.05;
   const DATE=/^\d{4}-\d{2}-\d{2}$/;
-  const yellowDefaults=()=>({tdcEnabled:true,tdcThreshold:60,priceEnabled:true,repairPct:3});
+  const yellowDefaults=()=>({tdcEnabled:true,tdcThreshold:60,priceEnabled:true,repairPct:3,blueEnabled:true});
   const momentumDefaults=()=>({lookback:126,skip:21,frequency:'monthly',buffer:0});
   function defaults(){return {schemaVersion:1,name:'我的双模型策略',start:'2016-10-21',end:'2026-10-22',asset:'QQQ',momentum:momentumDefaults(),baseExposure:1,allowSynthetic:false,band:.05,costMultiplier:1,financingAnnualRate:FINANCING_RATE,rules:RULES.map(r=>({id:r.id,action:r.action,value:r.value,...(r.conditional?{unlock:yellowDefaults()}:{days:r.days}),priority:r.priority,...(r.id==='blue'?{steps:r.steps,onlyIfNotLower:true}:{})}))};}
   function validate(input,data){
@@ -46,11 +46,12 @@
       if(r.id==='blue'&&typeof onlyIfNotLower!=='boolean')throw new Error('蓝点敞口比较开关无效。');
       let unlock;
       if(r.conditional){
-        unlock=rule.unlock===undefined?yellowDefaults():rule.unlock;
-        if(!unlock||typeof unlock.tdcEnabled!=='boolean'||typeof unlock.priceEnabled!=='boolean')throw new Error('黄点解锁开关无效。');
+        if(rule.unlock!==undefined&&(!rule.unlock||typeof rule.unlock!=='object'))throw new Error('黄点解锁开关无效。');
+        unlock={...yellowDefaults(),...rule.unlock};
+        if(typeof unlock.tdcEnabled!=='boolean'||typeof unlock.priceEnabled!=='boolean'||typeof unlock.blueEnabled!=='boolean')throw new Error('黄点解锁开关无效。');
         bound(unlock.tdcThreshold,0,100,'黄点TDC解锁阈值');bound(unlock.repairPct,0,100,'QQQ距52周高点百分比');
-        if(rule.action!=='ignore'&&!unlock.tdcEnabled&&!unlock.priceEnabled)throw new Error('黄点至少启用一个解锁条件：TDC回落或价格修复。');
-        unlock={tdcEnabled:unlock.tdcEnabled,tdcThreshold:unlock.tdcThreshold,priceEnabled:unlock.priceEnabled,repairPct:unlock.repairPct};
+        if(rule.action!=='ignore'&&!unlock.tdcEnabled&&!unlock.priceEnabled&&!unlock.blueEnabled)throw new Error('黄点至少启用一个解锁条件：TDC回落、价格修复或实心蓝点永久解锁。');
+        unlock={tdcEnabled:unlock.tdcEnabled,tdcThreshold:unlock.tdcThreshold,priceEnabled:unlock.priceEnabled,repairPct:unlock.repairPct,blueEnabled:unlock.blueEnabled};
       }
       return{id:r.id,action:rule.action,value:rule.value,...(r.conditional?{unlock}:{days:rule.action==='blue_ladder'?40:rule.days}),priority:rule.priority,...(r.id==='blue'?{steps,onlyIfNotLower}:{})};
     });
@@ -59,7 +60,7 @@
   function resolveTarget(data,cfg,t,last){
     const mask=data.signals[t];
     RULES.forEach((r,i)=>{if(mask&(1<<i))last[i]=t;});
-    const yellowRule=cfg.rules[4],unlock=yellowRule.unlock||yellowDefaults();
+    const yellowRule=cfg.rules[4],unlock={...yellowDefaults(),...yellowRule.unlock};
     const memory=last.yellowLock||(last.yellowLock={locked:false,triggerIndex:null,releaseIndex:null,releaseReason:null});
     const tdc=data.yellowContext?.tdc?.[t],dd52=data.yellowContext?.qqqDrawdown52?.[t];
     const finite=v=>typeof v==='number'&&Number.isFinite(v);
@@ -67,6 +68,7 @@
     else if(mask&(1<<4)){memory.locked=true;memory.triggerIndex=t;memory.releaseIndex=null;memory.releaseReason=null;}
     else if(memory.locked){
       const matched=[];
+      if(unlock.blueEnabled&&(mask&(1<<2)))matched.push('出现实心蓝点，永久解除本次黄点锁定');
       if(unlock.tdcEnabled&&finite(tdc)&&tdc<unlock.tdcThreshold)matched.push(`TDC ${number(tdc)} < ${number(unlock.tdcThreshold)}`);
       if(unlock.priceEnabled&&finite(dd52)&&dd52>=-unlock.repairPct/100)matched.push(`QQQ距52周高点 ${number(dd52*100)}% ≥ -${number(unlock.repairPct)}%`);
       if(matched.length){memory.locked=false;memory.releaseIndex=t;memory.releaseReason=matched.join('；');}
@@ -119,7 +121,8 @@
         const checks=[];
         if(unlock.tdcEnabled)checks.push(`TDC ${finite(tdc)?number(tdc):'数据缺失'}（须 < ${number(unlock.tdcThreshold)}）`);
         if(unlock.priceEnabled)checks.push(`QQQ距52周高点 ${finite(dd52)?number(dd52*100)+'%':'数据缺失'}（须 ≥ -${number(unlock.repairPct)}%）`);
-        reasons.push(`黄点锁定中，自 ${yellowLock.triggerDate} 触发；${checks.join('；')}。任一已启用条件满足即解除，缺失值不视为达标；黄点当日优先触发，下一信号日起检查解除。蓝点高优先级覆盖不解除黄点锁定。`);
+        if(unlock.blueEnabled)checks.push('等待新的实心蓝点永久解锁（空心蓝点不计）');
+        reasons.push(`黄点锁定中，自 ${yellowLock.triggerDate} 触发；${checks.join('；')}。任一已启用条件满足即解除，缺失值不视为达标；黄点当日优先触发，下一信号日起检查解除。实心蓝点解锁与蓝点是否实际成交分开判断。`);
       }else reasons.push(`黄点已于 ${yellowLock.releaseDate} 信号日解除：${yellowLock.releaseReason}。解除后执行其他有效规则或常态；未出现新黄点前不重新锁定。`);
     }
     if(blueLadder)reasons.push(`${selection} 蓝点分批${blueLadder.selected?'生效':'候选'}：最近40个交易日（${blueLadder.windowStart} 至 ${blueLadder.windowEnd}，含当日）有 ${blueLadder.count} 个实心蓝点日；上限 x=${number(blueLadder.cap)} 倍，分 n=${blueLadder.steps} 次加满，目标 ${number(blueLadder.cap)} × min(1, ${blueLadder.count}/${blueLadder.steps}) = ${number(blueLadder.target)} 倍。旧蓝点移出窗口后不再计数，空心蓝点不计入。`);
@@ -156,7 +159,7 @@
     if(data?.schemaVersion!==1||!Array.isArray(data.dates)||!data.symbols?.some(s=>s.symbol==='BIL')||RULES.some((r,i)=>data.signalTypes?.[i]!==r.id))throw new Error('自定义回测数据不完整，请刷新重试。');
     const cfg=validate(input,data),start=data.dates.findIndex(d=>d>=cfg.start),end=data.dates.findLastIndex(d=>d<=cfg.end);
     if(start<1||end<=start)throw new Error('所选日期内至少需要两个交易日。');
-    if(cfg.rules[4].action!=='ignore'&&(!data.yellowContext||data.yellowContext.tdc?.length!==data.dates.length||data.yellowContext.qqqDrawdown52?.length!==data.dates.length))throw new Error('缺少黄点条件解锁的TDC或QQQ修复历史，请刷新页面重试。');
+    if(cfg.rules[4].action!=='ignore'&&(cfg.rules[4].unlock.tdcEnabled||cfg.rules[4].unlock.priceEnabled)&&(!data.yellowContext||data.yellowContext.tdc?.length!==data.dates.length||data.yellowContext.qqqDrawdown52?.length!==data.dates.length))throw new Error('缺少黄点条件解锁的TDC或QQQ修复历史，请刷新页面重试。');
     const last=RULES.map(()=>-1e9),targets=[];
     for(let t=0;t<=end;t++)targets.push(resolveTarget(data,cfg,t,last));
     const bil=data.symbols.findIndex(s=>s.symbol==='BIL'),qi=data.symbols.findIndex(s=>s.symbol==='QQQ'),turnover=[],history=[],benchmark=[],points={},trades=[];

@@ -1,0 +1,24 @@
+import assert from 'node:assert/strict';
+import '../public/custom-backtest.js';
+const C=globalThis.CustomBacktest,clone=x=>JSON.parse(JSON.stringify(x));
+const dates=[];for(let i=0;dates.length<85;i++){const d=new Date(Date.UTC(2007,0,3+i));if(d.getUTCDay()%6)dates.push(d.toISOString().slice(0,10));}
+const data={schemaVersion:1,meta:{start:dates[0],end:dates.at(-1)},dates,signalTypes:C.RULES.map(r=>r.id),symbols:[{symbol:'QQQ',underlying:'QQQ',leverage:1},{symbol:'TQQQ',underlying:'QQQ',leverage:3},{symbol:'BIL',underlying:'BIL',leverage:0}],returns:dates.map(()=>[0,0,0]),costs:dates.map(()=>[0,0,0]),tradable:dates.map(()=>7),signals:dates.map(()=>0)};
+const cfg=C.defaults();cfg.start=dates[1];cfg.end=dates.at(-1);cfg.costMultiplier=0;for(const r of cfg.rules)r.action='ignore';cfg.rules[4].action='flat';Object.assign(cfg.rules[4].unlock,{tdcEnabled:false,priceEnabled:false});
+assert.equal(cfg.rules[4].unlock.blueEnabled,true);
+const old=clone(cfg);delete old.rules[4].unlock.blueEnabled;assert.equal(C.validate(old,data).rules[4].unlock.blueEnabled,true);
+const input=clone(data);input.signals[1]=1<<4;input.signals[4]=1<<3;input.signals[5]=1<<2;input.signals[70]=1<<4;input.signals[72]=1<<2;
+const run=C.run(input,cfg),p=i=>run.details.points[dates[i]];
+assert.equal(p(5).yellowLock.locked,true,'Hollow blue cannot release the lock');
+assert.equal(p(6).yellowLock.locked,false,'Solid blue unlocks on its signal day and executes next close');
+assert.equal(p(6).yellowLock.releaseDate,dates[5]);assert.ok(p(6).yellowLock.releaseReason.includes('实心蓝点'));
+assert.equal(p(6).targetExposure,1,'Unlock works with the blue trading operation ignored');
+assert.equal(p(69).yellowLock.locked,false,'Unlock remains after the 40-day blue window has ended');
+assert.equal(p(71).yellowLock.locked,true,'A new yellow event relocks');assert.equal(p(73).yellowLock.locked,false);
+const both=clone(data);both.signals[1]=(1<<4)|(1<<2);const b=C.run(both,cfg);assert.equal(b.details.points[dates[2]].yellowLock.locked,true,'New yellow takes precedence over blue on the same day');assert.equal(b.details.points[dates[50]].yellowLock.locked,true,'A same-day blue is not retrospectively applied');
+const gate=clone(cfg);Object.assign(gate.rules[2],{action:'blue_ladder',value:.2,steps:1});const gr=C.run(input,gate).details.points[dates[6]];
+assert.equal(gr.yellowLock.locked,false);assert.equal(gr.blueComparison.eligible,false);assert.equal(gr.state,'常态');assert.equal(gr.targetExposure,1,'Unlock precedes the blue exposure comparison');
+const off=clone(cfg);Object.assign(off.rules[4].unlock,{tdcEnabled:true,blueEnabled:false});const withContext=clone(input);withContext.yellowContext={tdc:dates.map(()=>90),qqqDrawdown52:dates.map(()=>-.5)};assert.equal(C.run(withContext,off).details.points[dates[69]].yellowLock.locked,true,'Explicit opt-out preserves legacy locking');
+const invalid=clone(cfg);invalid.rules[4].unlock.blueEnabled=false;assert.throws(()=>C.validate(invalid,data),'All unlock conditions disabled is invalid');
+const malformed=clone(cfg);malformed.rules[4].unlock.blueEnabled='yes';assert.throws(()=>C.validate(malformed,data));
+const future=clone(input);future.signals[60]=1<<2;assert.deepEqual(C.run(future,cfg).history.slice(0,60),run.history.slice(0,60));
+console.log(JSON.stringify({bluePermanentUnlock:true,defaultAndMigration:true,blueOnlyWithoutPriceInputs:true,solidOnly:true,newYellowRelock:true,sameDayYellowPriority:true,independentOfTradesAndExposureGate:true,nextClose:true,noLookahead:true}));

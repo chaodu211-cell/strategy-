@@ -3,6 +3,7 @@ import {readFile} from 'node:fs/promises';
 import {advanceLedger,queueTargets} from '../lib/forward-ledger.js';
 import '../public/custom-backtest.js';
 import './test_blue_comparison.mjs';
+import './test_blue_unlock.mjs';
 const C=globalThis.CustomBacktest;
 const dates=Array.from({length:155},(_,i)=>new Date(Date.UTC(2025,0,1+i)).toISOString().slice(0,10));
 const panel={dates,symbols:[{symbol:'QQQ'},{symbol:'SOXX'}],returns:dates.map((_,i)=>[i<135?.001:.8,.002])};

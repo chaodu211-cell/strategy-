@@ -22,7 +22,7 @@ const growing=copy(blue);growing.signals[2]=growing.signals[3]=1<<2;
 assert.equal(point(growing,c,2).targetExposure,1);assert.equal(point(growing,c,3).blueLadder.count,2);assert.equal(point(growing,c,3).state,'实心蓝点');assert.equal(point(growing,c,4).targetExposure,1.5,'Rejected blue days still count toward subsequent tranches');
 const credit=copy(blue);credit.signals[1]|=1<<7;const cc=copy(c);cc.rules[7].action='scale';cc.rules[7].value=.25;
 const cp=point(credit,cc);assert.equal(cp.blueComparison.baselineExposure,.25);assert.equal(cp.state,'实心蓝点');assert.equal(cp.targetExposure,.5,'Compare with the reduced ordinary target, not raw base exposure');
-const locked=copy(blue);locked.signals[1]|=1<<4;const yc=copy(c);yc.rules[4].action='flat';
+const locked=copy(blue);locked.signals[1]|=1<<4;const yc=copy(c);yc.rules[4].action='flat';yc.rules[4].unlock.blueEnabled=false;
 const yp=point(locked,yc);assert.equal(yp.targetExposure,.5);assert.equal(yp.blueComparison.baselineExposure,0);assert.equal(yp.yellowLock.locked,true,'Blue selection never unlocks yellow');
 yc.rules[4].action='long';yc.rules[4].value=1;const longLock=point(locked,yc);assert.equal(longLock.state,'黄点预警');assert.equal(longLock.targetExposure,1);
 yc.rules[4].action='short';yc.rules[4].value=1;const shortLock=point(locked,yc);assert.equal(shortLock.blueComparison.baselineExposure,-1);assert.equal(shortLock.state,'实心蓝点','Signed exposure is compared, not absolute exposure');
