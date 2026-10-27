@@ -1,0 +1,104 @@
+{
+  "schemaVersion": 1,
+  "startDate": "2026-10-27",
+  "timezone": "Asia/Shanghai",
+  "repository": "chaodu211-cell/strategy-",
+  "schedule": [
+    "10:17",
+    "18:17"
+  ],
+  "custom": {
+    "schemaVersion": 1,
+    "name": "自定义·动量（登记默认参数）",
+    "start": "2016-10-21",
+    "end": "2026-10-22",
+    "asset": "momentum",
+    "momentum": {
+      "lookback": 126,
+      "skip": 21,
+      "frequency": "monthly",
+      "buffer": 0
+    },
+    "baseExposure": 1,
+    "allowSynthetic": false,
+    "band": 0.05,
+    "costMultiplier": 1,
+    "financingAnnualRate": 0.05,
+    "rules": [
+      {
+        "id": "red",
+        "action": "flat",
+        "value": 0,
+        "days": 30,
+        "priority": 80
+      },
+      {
+        "id": "red_ad",
+        "action": "flat",
+        "value": 0,
+        "days": 30,
+        "priority": 75
+      },
+      {
+        "id": "blue",
+        "action": "blue_ladder",
+        "value": 1,
+        "days": 40,
+        "priority": 95,
+        "steps": 10
+      },
+      {
+        "id": "blue_soft",
+        "action": "ignore",
+        "value": 1,
+        "days": 20,
+        "priority": 20
+      },
+      {
+        "id": "yellow",
+        "action": "flat",
+        "value": 0,
+        "unlock": {
+          "tdcEnabled": true,
+          "tdcThreshold": 60,
+          "priceEnabled": true,
+          "repairPct": 3
+        },
+        "priority": 90
+      },
+      {
+        "id": "ccc_top",
+        "action": "scale",
+        "value": 0.5,
+        "days": 63,
+        "priority": 60
+      },
+      {
+        "id": "ccc_bot",
+        "action": "ignore",
+        "value": 1,
+        "days": 20,
+        "priority": 40
+      },
+      {
+        "id": "ccc_stress",
+        "action": "scale",
+        "value": 0.5,
+        "days": 1,
+        "priority": 70
+      },
+      {
+        "id": "ccc_above",
+        "action": "scale",
+        "value": 0.5,
+        "days": 1,
+        "priority": 50
+      }
+    ]
+  },
+  "notes": [
+    "六套原策略参数保持原样；自定义动量按本文件单独登记，浏览器草稿不会自动上传。",
+    "净值首个完整收盘以1为基准，初始继承已观测目标；首次基准不计入场费，此后包含BIL收益、分档成交成本及融资5% ACT/365。",
+    "同一策略版本参数固定；历史净值只追加，不随上游模型回写而重算。"
+  ]
+}

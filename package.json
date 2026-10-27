@@ -1,0 +1,9 @@
+{
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node scripts/test_forward.mjs",
+    "update": "node scripts/daily-update.mjs",
+    "build": "node scripts/build-pages.mjs"
+  }
+}

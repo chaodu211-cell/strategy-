@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#172731">
+<title>双模型策略 · 持仓与研究</title>
+<meta name="description" content="读懂最优拟合与 CCC 利差信号，查看六种双模型策略的目标持仓、配置原因与历史检验。">
+<link rel="icon" href="./favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="./style.css">
+</head>
+<body>
+<aside class="sidebar">
+<a href="#overview" class="brand"><span class="brand-mark"><i></i><i></i></span><span>双模<span class="brand-sub">STRATEGY LAB</span></span></a>
+<div class="nav-label">研究工作台</div>
+<nav aria-label="主导航">
+<a class="nav-link active" href="#overview"><span class="nav-icon">◫</span>策略总览</a>
+<a class="nav-link" href="#holdings"><span class="nav-icon">◴</span>目标持仓</a>
+<a class="nav-link" href="#signals"><span class="nav-icon">⌁</span>模型信号</a>
+<a class="nav-link" href="#history"><span class="nav-icon">↗</span>历史检验</a>
+<a class="nav-link" href="#forward"><span class="nav-icon">◷</span>每日净值</a>
+<a class="nav-link" href="#custom"><span class="nav-icon">⚙</span>自定义回测</a>
+<a class="nav-link" href="#method"><span class="nav-icon">≡</span>策略说明</a>
+</nav>
+<div class="sidebar-note"><div class="tiny-label">TWO MODELS. ONE FRAMEWORK.</div><p>择时决定何时参与，<br>信用决定承担多少风险。</p><div class="side-line"></div><span class="snapshot-dot"></span> GitHub 模型数据<span class="side-date" data-signal-date>—</span></div>
+</aside>
+<div class="app-shell">
+<header class="topbar"><div class="breadcrumb">研究工作台 <span>/</span> <strong>双模型策略</strong></div><div class="top-actions"><span class="snapshot-badge" id="connection-badge"><i></i> 正在连接仓库</span><button class="button subtle refresh-button" id="refresh-live" aria-label="立即检查仓库更新">↻ 检查更新</button><button class="button subtle" id="download-snapshot"><span>↓</span> 导出持仓</button></div></header>
+<main>
+<section id="overview" class="overview anchor-section">
+<div class="intro"><div><p class="eyebrow">DUAL-MODEL STRATEGY</p><h1>读懂信号，配置当下<span>。</span></h1><p class="lead">最优拟合负责择时，CCC 利差调节风险。<br class="mobile-break">从两个模型，读懂每一份仓位的来由。</p></div><div class="asof"><span>组合计算截至</span><strong data-signal-date>—</strong><small>按信号次日收盘执行</small></div></div>
+<div class="freshness"><span class="freshness-icon">◷</span><span><strong id="freshness-title">模型数据同步中</strong><span id="freshness-copy">正在连接两个 GitHub 模型仓库…</span></span><a href="#method">查看口径 <span>↗</span></a></div>
+<div class="model-summary">
+<a class="model-overview fit-overview" href="#signals"><div class="model-icon">⌁</div><div class="model-main"><span class="eyebrow">TIMING MODEL</span><h2>最优拟合 <span class="tag green">择时许可</span></h2><p id="fit-summary">加载中</p></div><div class="mini-reading"><span>TDC</span><strong id="tdc-top">—</strong><span class="mini-annotation">解锁阈值 &lt; 60</span></div><span class="card-arrow">↗</span></a>
+<a class="model-overview credit-overview" href="#signals"><div class="model-icon">≋</div><div class="model-main"><span class="eyebrow">CREDIT MODEL</span><h2>CCC 利差 <span class="tag amber">信用压力</span></h2><p id="credit-summary">加载中</p></div><div class="mini-reading"><span>252日分位</span><strong id="credit-top">—</strong><span class="mini-annotation">压力阈值 ≥ 95</span></div><span class="card-arrow">↗</span></a>
+</div>
+<div class="monitor-panel panel" aria-label="GitHub 仓库监控"><div class="monitor-top"><div><span class="monitor-live-dot" id="monitor-dot"></span><strong>仓库持续监控</strong><span class="monitor-frequency">每60秒检查 · 跟随源模型日频更新</span></div><span id="last-checked">首次检查中</span></div><div class="repo-status-grid" id="repo-status-grid"><div class="repo-loading">正在读取最优拟合与 CCC 利差的发布状态…</div></div><div class="monitor-warnings" id="monitor-warnings" hidden></div></div>
+</section>
+<section id="holdings" class="anchor-section holdings-section">
+<div class="section-heading"><div><p class="eyebrow">01 / CURRENT ALLOCATION</p><h2>当前合理持仓</h2><p>点击策略可查看完整规则、配置方式与当前执行依据。</p></div><div class="segmented" role="group" aria-label="策略版本"><button data-family="simple" class="active" aria-pressed="true">简明版</button><button data-family="fitted" aria-pressed="false">拟合版</button></div></div>
+<div class="risk-options" id="risk-options"></div><div class="strategy-entry"><button id="open-strategy-details" class="text-link" aria-haspopup="dialog" aria-controls="strategy-dialog">查看所选策略的完整说明 ↗</button></div>
+<div class="allocation-grid">
+<article class="panel allocation-panel"><div class="panel-top"><div><h3 id="allocation-title">简明·均衡</h3><p class="allocation-date" id="allocation-date">信号日 —</p></div><span class="tag" id="position-status">规则目标</span></div><div class="allocation-body"><div class="donut-wrap"><div class="donut" id="allocation-donut"><div class="donut-hole"><span>底层风险敞口</span><strong id="exposure-value">—</strong><small id="underlying-label">纳斯达克 100</small></div></div></div><div class="allocation-legend" id="allocation-legend"></div></div><div class="allocation-footer"><span>资金权重 ≠ 底层敞口</span><span id="exposure-formula">—</span></div></article>
+<article class="panel reasons-panel"><div class="panel-top"><h3>为什么这样持仓？</h3><span class="small-muted">按策略优先级解释</span></div><div class="reason-list" id="reason-list"></div><div class="reason-result" id="reason-result"></div></article>
+</div>
+<div class="all-holdings panel"><div class="panel-top"><h3>六种策略，一眼看清</h3><span class="small-muted">点击任意一行查看完整策略</span></div><div class="table-scroll"><table><thead><tr><th>策略</th><th>权益工具 / 资金权重</th><th>现金类 BIL</th><th>底层敞口</th><th>信号日</th><th>当前依据</th></tr></thead><tbody id="holdings-table"></tbody></table></div></div>
+</section>
+<section id="signals" class="anchor-section">
+<div class="section-heading"><div><p class="eyebrow">02 / MODEL READINGS</p><h2>两个模型，各司其职</h2><p>模型输出信号与约束，组合策略将它们转换成具体持仓。</p></div><span class="section-note">信号与仓位之间，都有规则。</span></div>
+<div class="signal-grid">
+<article class="panel signal-panel"><div class="signal-title"><span class="model-index">A</span><div><h3>最优拟合模型</h3><p>识别参与、离场与解除锁定的时机</p></div><span class="tag green">常态</span></div><div class="reading-pair"><div><span>红点温度</span><strong id="fit-temperature">—</strong></div><div><span>TDC</span><strong id="fit-tdc">—</strong></div></div><div class="signal-state"><i class="green-dot"></i><div><strong id="fit-state-title">当前未处于红点窗口或黄点锁仓</strong><p id="fit-state-detail">红点已超过30个交易日；TDC低于60，黄点锁定已解除。</p></div></div><div class="event-list" id="fit-events"></div><p class="panel-footnote">简明版用红黄点控制离场，不以蓝点主动抄底。</p></article>
+<article class="panel signal-panel"><div class="signal-title"><span class="model-index credit-index">B</span><div><h3>CCC 利差模型</h3><p>观察信用压力，调节可承担的敞口</p></div><span class="tag amber">压力阶段</span></div><div class="reading-pair"><div><span>CCC 利差</span><strong id="credit-spread">—</strong></div><div><span>200日均线</span><strong id="credit-ma">—</strong></div></div><div class="percentile-heading"><span>252日历史分位</span><strong id="credit-percentile">—</strong></div><div class="percentile-track"><div id="credit-percentile-fill"></div><i></i></div><div class="percentile-ticks"><span>0 · 自满</span><span>95 · 压力阈值</span><span>100</span></div><div class="signal-state amber-state"><i class="amber-dot"></i><div><strong id="credit-state-title">高于均线，且进入信用压力区间</strong><p id="credit-state-detail">简明版减半；拟合版按各档压力乘数调整。</p></div></div><p class="panel-footnote" id="credit-footnote">历史分位不是风险概率；高于均线不表示当天环比上升。</p></article>
+</div>
+</section>
+<section id="forward" class="anchor-section forward-section"><div class="section-heading"><div><p class="eyebrow">LIVE / FORWARD NAV</p><h2>从今天起，记录每一步</h2><p>2026-10-27 起，净值基准为 1。每日保留当时已观测的信号和持仓。</p></div><a class="text-link" href="https://github.com/chaodu211-cell/strategy-" target="_blank" rel="noopener">查看公开仓库 ↗</a></div><div class="panel forward-panel"><div class="forward-top"><span id="forward-status" class="tag amber">等待首次更新</span><button id="forward-refresh" class="text-link" type="button">↻ 读取最新账本</button></div><p id="forward-updated" class="forward-meta"></p><p id="forward-warning" class="forward-warning" hidden></p><div id="forward-legend" class="forward-legend"></div><div class="forward-chart-wrap"><svg id="forward-chart" viewBox="0 0 1000 330" role="group" tabindex="0" aria-label="从今日开始的策略净值"></svg></div><div class="forward-toolbar"><label>查看持仓与依据 <select id="forward-strategy" aria-label="净值详情策略"></select></label><span id="forward-date"></span></div><div id="forward-detail" class="forward-detail" aria-live="polite"></div><div class="table-scroll"><table><thead><tr><th>策略</th><th>当前净值</th><th>估值日</th><th>已记录持仓</th><th>下一目标信号日</th></tr></thead><tbody id="forward-table"></tbody></table></div><p class="forward-meta">北京时间每日 10:17 更新，18:17 重查。休市日不增加收益点。首个完整收盘以前只显示起点；之后按真实ETF复权收益、原成本与BIL收益计算，融资年利率固定5%。晚到的信号只作用于观测后的收盘，历史净值不回写。数据不齐时保留可核验状态并显示原因。</p><p class="forward-meta">六套原策略保持原参数；“自定义·动量”使用仓库 tracking/config.json 登记的默认规则，常态与蓝点共用动量底层。浏览器个人设置仅用于历史回测，不会自动上传或改变每日跟踪。此处为模拟策略净值。</p></div></section>
+<section id="custom" class="anchor-section custom-section">
+<div class="section-heading"><div><p class="eyebrow">03 / YOUR RULES</p><h2>让预警，按你的规则执行</h2><p>为每个信号设定操作，生成自己的历史回测。</p></div><a href="#history" class="text-link">查看回测结果 ↗</a></div>
+<div class="panel custom-panel">
+<form id="custom-form">
+<div class="custom-basics">
+<label class="custom-name">策略名称<input name="name" maxlength="40" required></label>
+<label>常态与蓝点底层<select name="asset"><option value="QQQ">QQQ · 纳指100</option><option value="SOXX">SOXX · 半导体</option><option value="momentum">动量选品 · QQQ / SOXX</option></select></label>
+<label>常态底层敞口<span class="custom-number"><input name="baseExposure" type="number" min="0" max="3" step="0.05" required><span>倍</span></span></label>
+
+</div>
+<div id="momentum-options" class="momentum-options" hidden><label>观察交易日<input name="momentumLookback" type="number" min="22" max="504" step="1" value="126" required></label><label>剔除最近交易日<input name="momentumSkip" type="number" min="0" max="503" step="1" value="21" required></label><label>选品频率<select name="momentumFrequency"><option value="monthly">每月首个交易日</option><option value="weekly">每周首个交易日</option><option value="daily">每日</option></select></label><label>换品缓冲（百分点）<input name="momentumBuffer" type="number" min="0" max="100" step="0.1" value="0" required></label><p>比较 QQQ 与 SOXX 的复权收益，较强者为常态与蓝点共用底层；同分保留原选品，初次同分选 QQQ。缓冲是对手收益需多出的百分点；信号次一交易日收盘成交。</p></div><p class="custom-instrument-note">自动使用所选底层当时可交易的最高倍数ETF，优先真实ETF；历史上没有高倍工具时自动使用较低倍数工具。蓝点与常态使用同一底层，超出ETF倍数的蓝点敞口按固定5%年利率融资。</p><div class="custom-rule-help"><strong>同日规则怎样执行？</strong><p>数字越大优先级越高；仅采用最高优先级的有效规则，同级按下表从上到下。不响应的规则不参与排序，各规则乘数不连乘。指定多头及蓝点分批配置同一所选底层，空头使用纳指反向ETF；剩余资金持有 BIL。</p><p>普通事件窗口按交易日计算，包含触发日，每次新信号重新计时；蓝点分批按最近40日的实心蓝点天数计算；信用压力和高于200日线在条件保持期间生效。黄点触发后锁定，直至启用的TDC回落或QQQ价格修复条件满足；不按持续天数结束，解除后回到其他有效规则或常态。</p></div>
+<p class="custom-mobile-hint">左右滑动设置表，调整敞口、持续天数与优先级 →</p><div class="table-scroll custom-rule-scroll"><table class="custom-rules"><thead><tr><th>预警 / 状态</th><th>发生时如何操作</th><th>敞口 / 乘数</th><th>持续交易日</th><th>优先级</th></tr></thead><tbody id="custom-rule-rows"></tbody></table></div>
+<details class="custom-options" open><summary>回测区间与执行设置</summary><div class="custom-range"><label>开始日期<input name="start" type="date" min="2007-01-03" max="2026-10-22" required></label><span>→</span><label>结束日期<input name="end" type="date" min="2007-01-03" max="2026-10-22" required></label><div class="custom-window-presets"><button type="button" data-custom-window="inSample">十年样本内</button><button type="button" data-custom-window="semiOut">2007–16</button><button type="button" data-custom-window="full">全部历史</button></div></div>
+<div class="custom-execution"><label>再平衡带<span class="custom-number"><input name="band" type="number" min="0" max="25" step="0.1" required><span>百分点</span></span></label><label>原成本 ×<input name="costMultiplier" type="number" min="0" max="5" step="0.1" required></label><label class="custom-check"><input name="allowSynthetic" type="checkbox"><span>允许早期合成杠杆序列</span></label></div>
+<p class="custom-data-note">历史数据截至2026-10-22。信号次一交易日收盘成交，CCC另滞后一交易日；使用原研究的复权收益、分档成本及BIL收益。首日继承此前目标，从下一交易日起计收益。蓝点分批的 x 不设人为上限，超过所选ETF倍数时以融资持有实现；融资年利率固定5%，按借款余额×5%×实际日历天数/365扣息，利息并入负债。负现金显示为融资负债。其他规则沿用原仓位限制；默认关闭合成序列。融资回测不模拟券商保证金追缴，净值耗尽时终止。</p></details>
+<div class="custom-form-actions"><div><button type="submit" class="button custom-run" id="run-custom">生成回测 ↗</button><button type="button" class="button subtle" id="reset-custom">恢复初始设置</button></div><p id="custom-status" role="status" aria-live="polite">设置完成后点击“生成回测”。</p></div>
+</form>
+<div id="custom-summary" class="custom-summary" hidden></div>
+<div class="custom-export"><p>这是独立的自定义规则，不等同于上方六套策略。设置保存在本浏览器；修改后须重新生成回测。</p><div><button class="text-link" id="export-custom-settings" disabled>↓ 下载本次设置与指标</button><button class="text-link" id="export-custom-daily" disabled>↓ 导出每日回测 CSV</button></div></div>
+</div></section>
+<section id="history" class="anchor-section">
+<div class="section-heading"><div><p class="eyebrow">04 / HISTORICAL EVIDENCE</p><h2>把结果，放回历史里看</h2><p>历史研究截至2026-10-22，与上方实时目标仓位分开更新。收益与回撤一同衡量。</p></div></div>
+<div class="history-source-controls" role="group" aria-label="图表结果来源"><button type="button" data-history-source="original" aria-pressed="true" class="active">原策略回测</button><button type="button" data-history-source="custom" aria-pressed="false" disabled>自定义回测</button><span id="custom-stale" hidden>设置已修改 · 当前显示上次生成结果</span></div><div class="panel chart-panel"><div class="chart-toolbar"><div><h3 id="history-title">简明·均衡 <span>vs 持有 QQQ</span></h3><div class="chart-legend"><span><i></i> 所选策略</span><span><i></i> 持有 QQQ</span><span class="drawdown-legend"><i></i> 最大回撤</span></div></div><div class="segmented small" id="history-window-controls" role="group" aria-label="回测窗口"><button class="active" data-window="inSample" aria-pressed="true">十年 · 样本内</button><button data-window="semiOut" aria-pressed="false">2007–16 · 半样本外</button></div></div><div class="history-metrics" id="history-metrics"></div><fieldset id="annotation-controls" class="annotation-controls"><legend>模型信号与成交标记</legend><div id="annotation-filter-groups"></div><p class="annotation-explainer">所选策略的实际成交标在净值线上，两个模型的原始信号分列在下方。CCC 压力区间表示信用利差分位 ≥95；标记按回测可用日对齐。</p><p id="annotation-status" class="annotation-status" aria-live="polite">正在载入历史特殊点位…</p></fieldset><div class="chart-area"><svg id="nav-chart" viewBox="0 0 1000 380" role="group" aria-label="策略与QQQ历史净值曲线"></svg><div class="chart-tooltip" id="chart-tooltip" role="region" aria-label="历史持仓与点位详情" hidden></div></div><div id="drawdown-summary" class="drawdown-summary" aria-live="polite">正在核对每日净值中的最大回撤…</div><div class="chart-bottom"><span id="chart-period">—</span><span>悬停查看 · 点击固定并滚动 · 方向键逐点 / 回车固定 · 对数刻度</span></div></div>
+<div class="research-note"><span class="research-note-icon">i</span><p><strong>回测需要边界感。</strong> <span id="history-caveat-copy">十年数据参与了参数选择，属于样本内；2007–16年的信号设计也参考了历史，只能视作半样本外。回撤预算是筛选条件，不能保证未来回撤上限。</span></p></div>
+</section>
+<section id="method" class="anchor-section method-section">
+<div class="section-heading"><div><p class="eyebrow">05 / THE FRAMEWORK</p><h2>规则清楚，才能执行</h2></div><a class="text-link" href="./research.md" download>下载完整策略说明 ↓</a></div>
+<div class="framework-grid"><div class="framework-intro"><h3>两种做法，<br>三档风险。</h3><p>简明版保留少量可解释规则；拟合版增加选品与风控模块。各档代表不同的常态敞口与回撤预算。</p><div class="framework-label"><span>不含盈利修正模型</span><span>信号次日收盘成交</span></div></div><div class="method-accordions">
+<details open><summary><span><b>01</b> 简明版：四条规则</span><span class="plus">+</span></summary><div class="details-body">常态持有纳指，稳健 / 均衡 / 进取分别对应1 / 1.5 / 2.5倍敞口。CCC利差高于200日均线时减半；实心或空心红点后30个交易日空仓；黄点触发锁仓，直到TDC低于60、纳指修复至52周高点3%以内，或出现实心蓝点。</div></details>
+<details><summary><span><b>02</b> 拟合版：选品与多重风控</span><span class="plus">+</span></summary><div class="details-body">每月首个交易日比较QQQ与SOXX剔除最近一月的126日动量。常态敞口为1 / 1.5 / 3倍；叠加红黄蓝点、熊市闸门、CCC压力与见顶预警。进取档增加净值回撤闸。规则与乘数随档位变化，当前生效项见持仓依据。</div></details>
+<details><summary><span><b>03</b> 执行与工具：仓位不等于敞口</span><span class="plus">+</span></summary><div class="details-body">信号日收盘后判定，下一交易日收盘成交；回测中的CCC数据再滞后一个交易日。余款按BIL现金类工具处理。TQQQ与SOXL目标为标的每日3倍表现，25%资金权重约对应0.75倍底层敞口；每日重置和复利使长期结果不同于指数长期涨幅乘3。<div class="source-links"><a href="https://www.proshares.com/our-etfs/leveraged-and-inverse/tqqq" target="_blank" rel="noopener">TQQQ 官方资料 ↗</a><a href="https://www.direxion.com/product/daily-semiconductor-bull-bear-3x-etfs" target="_blank" rel="noopener">SOXL 官方资料 ↗</a></div></div></details>
+<details><summary><span><b>04</b> 数据范围与研究局限</span><span class="plus">+</span></summary><div class="details-body">此页面每60秒检查两个仓库的已发布数据；它跟随模型日频更新，不连接账户或逐笔行情。每个模型分别显示观察日、发布状态和仓库版本；组合只使用齐全且已校验的输入。若来源失败或缺少精确行情，保留最后完整持仓并显示原因。十年拟合窗为2016-10-21至2026-10-22，历史检验窗为2007-01-03至2016-10-21。2007–16并非完全独立的样本外，早期部分杠杆行情由合成序列补齐。历史业绩与回撤预算不构成未来收益承诺。</div></details>
+</div></div>
+</section>
+<footer><a class="footer-brand" href="#overview">双模 <span>STRATEGY LAB</span></a><span>用规则理解风险，用证据审视策略。</span><span id="footer-date">历史研究 · 2026-10-22</span></footer>
+<div class="loading-error" id="loading-error" hidden>数据载入失败。请刷新页面，或检查 data.json 文件。</div>
+</main></div><div class="toast" id="toast" role="status" hidden></div>
+<dialog id="strategy-dialog" class="strategy-dialog" aria-labelledby="strategy-dialog-title" aria-describedby="strategy-dialog-description"><div class="strategy-dialog-shell"><header class="strategy-dialog-header"><div><p class="eyebrow">STRATEGY PLAYBOOK</p><h2 id="strategy-dialog-title">策略详情</h2><p id="strategy-dialog-description">完整交易规则与配置依据</p></div><button class="strategy-close" data-close-strategy aria-label="关闭策略详情">×</button></header><div id="strategy-dialog-body" class="strategy-dialog-body"></div><footer class="strategy-dialog-footer"><a href="./research.md" download>下载完整策略研究说明 ↓</a><button class="button" data-strategy-history>查看本策略历史图 →</button></footer></div></dialog>
+<script src="./strategy-details.js" defer></script><script src="./model-annotations.js" defer></script><script src="./history-chart.js" defer></script><script src="./custom-backtest.js" defer></script><script src="./custom-controls.js" defer></script><script src="./app.js" defer></script><script src="./forward.js" defer></script>
+</body></html>

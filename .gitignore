@@ -1,0 +1,8 @@
+.runtime/
+pages/
+.DS_Store
+__pycache__/
+public/custom-inputs.json
+public/history-positions.json
+public/data.json
+lib/live-seed.json
