@@ -6,3 +6,5 @@ public/custom-inputs.json
 public/history-positions.json
 public/data.json
 lib/live-seed.json
+
+public/history-daily.json

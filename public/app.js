@@ -9,6 +9,7 @@ let refreshing = false;
 let lastSuccessMonitor = null;
 let HISTORY_DETAILS = null;
 let historyLoadState = 'idle';
+let DAILY_HISTORY=null,dailyHistoryState='idle',chartRange=null,chartRangeDates=[],rangeFrame=null;
 let customResult = null, customReadings = null, historySource = 'original';
 const annotationFilters = new Set(ModelAnnotations.TYPES.map(t=>t.id));
 const strategyDetails = StrategyDetails.attach();
@@ -52,10 +53,11 @@ function init() {
   initialized = true;
   $('#refresh-live').addEventListener('click',()=>refreshLive());
   $$('[data-family]').forEach(button=>button.addEventListener('click',()=>{selection.family=button.dataset.family;historySource='original';render();}));
-  $$('[data-window]').forEach(button=>button.addEventListener('click',()=>{selection.window=button.dataset.window;renderHistory();}));
+  $$('[data-window]').forEach(button=>button.addEventListener('click',()=>{selection.window=button.dataset.window;chartRange=null;renderHistory();}));
   $('#download-snapshot').addEventListener('click', downloadSnapshot);
   $('#annotation-controls').addEventListener('change',event=>{const id=event.target.dataset.annotationFilter;if(!id)return;if(event.target.checked)annotationFilters.add(id);else annotationFilters.delete(id);renderHistory();});
-  CustomControls.attach((result,readings)=>{customResult=result;customReadings=readings;historySource='custom';$$('[data-history-source="custom"]').forEach(b=>b.disabled=false);renderHistory();});
+  attachHistoryRangeControls();
+  CustomControls.attach((result,readings)=>{chartRange=null;customResult=result;customReadings=readings;historySource='custom';$$('[data-history-source="custom"]').forEach(b=>b.disabled=false);renderHistory();});
   $$('[data-history-source]').forEach(button=>button.addEventListener('click',()=>{historySource=button.dataset.historySource;renderHistory();}));
   $('[data-strategy-history]').addEventListener('click',()=>{historySource='original';renderHistory();});
   $('#open-strategy-details').addEventListener('click',()=>strategyDetails.open(selected(),'#open-strategy-details'));
@@ -126,13 +128,67 @@ function renderAnnotationControls(collection) {
   $$('[data-annotation-count]').forEach(el=>{el.textContent=HISTORY_DETAILS?.modelAnnotations?(collection.counts[el.dataset.annotationCount]||0):'—';});
   $('#annotation-status').textContent=HISTORY_DETAILS?.modelAnnotations?`本区间显示 ${collection.trades.length} 个ETF仓位调整、${collection.events.length} 个模型标记、${collection.intervals.length} 段信用状态。买卖按实际收盘成交日；CCC信号额外滞后一交易日。`:'正在载入历史特殊点位…';
 }
+function loadDailyHistory(){
+  if(dailyHistoryState!=='idle')return;
+  dailyHistoryState='loading';
+  fetch('./history-daily.json').then(r=>{if(!r.ok)throw new Error('日线净值读取失败');return r.json();}).then(d=>{
+    if(d.schemaVersion!==1||d.dates?.length<2||d.benchmark?.length!==d.dates.length||DATA.strategies.some(s=>d.strategies?.[s.id]?.length!==d.dates.length))throw new Error('日线净值格式无效');
+    DAILY_HISTORY=d;dailyHistoryState='ready';renderHistory();
+  }).catch(()=>{dailyHistoryState='error';$('#history-range-status').textContent='逐日净值加载失败，请刷新后重试时间范围选择。';});
+}
+function attachHistoryRangeControls(){
+  const schedule=()=>{if(rangeFrame)return;rangeFrame=requestAnimationFrame(()=>{rangeFrame=null;renderHistory();});};
+  for(const [id,side]of [['history-range-start','first'],['history-range-end','last']])$('#'+id).addEventListener('input',e=>{
+    if(!chartRange)return;const n=chartRangeDates.length;let v=Number(e.target.value);
+    if(side==='first')chartRange.first=Math.max(0,Math.min(chartRange.last-1,v));else chartRange.last=Math.min(n-1,Math.max(chartRange.first+1,v));
+    schedule();
+  });
+  for(const [id,side]of [['history-range-from','start'],['history-range-to','end']])$('#'+id).addEventListener('change',e=>{
+    if(!chartRange||!e.target.value)return;
+    const a=chartRangeDates[chartRange.first],b=chartRangeDates[chartRange.last];
+    Object.assign(chartRange,HistoryChart.rangeIndices(chartRangeDates,side==='start'?e.target.value:a,side==='end'?e.target.value:b,side));renderHistory();
+  });
+  $('#history-range-reset').addEventListener('click',()=>{if(!chartRange)return;chartRange.first=0;chartRange.last=chartRangeDates.length-1;renderHistory();});
+}
+function currentChartRange(dates,key,initial){
+  chartRangeDates=dates;
+  if(!chartRange||chartRange.key!==key)chartRange={key,...HistoryChart.rangeIndices(dates,initial.start,initial.end)};
+  const first=Math.max(0,Math.min(dates.length-2,chartRange.first)),last=Math.max(first+1,Math.min(dates.length-1,chartRange.last));
+  Object.assign(chartRange,{first,last,start:dates[first],end:dates[last]});
+  for(const [id,value]of [['history-range-start',first],['history-range-end',last]]){const el=$('#'+id);el.disabled=false;el.max=dates.length-1;el.value=value;el.setAttribute('aria-valuetext',dates[value]);}
+  for(const [id,value]of [['history-range-from',dates[first]],['history-range-to',dates[last]]]){const el=$('#'+id);el.disabled=false;el.min=dates[0];el.max=dates.at(-1);el.value=value;}
+  const track=$('.history-range-track');track.style.setProperty('--range-start',first/(dates.length-1)*100+'%');track.style.setProperty('--range-end',last/(dates.length-1)*100+'%');
+  $('#history-range-status').textContent=`${dates[first]} — ${dates[last]} · ${last-first+1} 个交易日`;
+  return{start:dates[first],end:dates[last]};
+}
+function renderRangeMetrics(m,b,note){
+  const value=(n,d=1)=>Number.isFinite(n)?fmt(n,d):'—';
+  $('#history-metrics').innerHTML=[{label:'区间年化收益',value:pct(m.cagr),note:`QQQ ${pct(b.cagr)}`},{label:'区间最大回撤',value:pct(m.mdd),note:`QQQ ${pct(b.mdd)}`},{label:'区间夏普比率',value:value(m.sharpe,2),note:`QQQ ${value(b.sharpe,2)}`},{label:'区间年换手率',value:`${value(m.turn_yr)}×`,note}].map(m=>`<div class="history-metric"><span>${m.label}</span><strong>${m.value}</strong><small>${m.note}</small></div>`).join('');
+}
+function rangeDrawdownSummary(d){return d.value<0?`最大回撤 ${(d.value*100).toFixed(2)}% · 峰值 ${d.peakDate} → 谷底 ${d.troughDate}${d.recoveryDate?' · 修复 '+d.recoveryDate:' · 区间内尚未修复'}`:'所选区间未出现净值回撤。';}
+function renderOriginalRange(current,detail){
+  const d=DAILY_HISTORY,range=currentChartRange(d.dates,'original',DATA.windows[selection.window]);
+  const a=chartRange.first,b=chartRange.last;
+  const strategy=d.dates.slice(a,b+1).map((date,i)=>({date,nav:d.strategies[current.id][a+i]})),benchmark=d.dates.slice(a,b+1).map((date,i)=>({date,nav:d.benchmark[a+i]}));
+  const m=HistoryChart.summarize(strategy,detail.trades),bm=HistoryChart.summarize(benchmark);
+  $$('[data-window]').forEach(btn=>{const r=DATA.windows[btn.dataset.window],active=r.start===range.start&&r.end===range.end;btn.classList.toggle('active',active);btn.setAttribute('aria-pressed',active);});
+  $('#history-title').innerHTML=`${displayName(current)} <span>vs 持有 QQQ</span>`;
+  renderRangeMetrics(m,bm,`${m.rebalanceDays} 次调仓 · 所选区间`);
+  const annotations=HISTORY_DETAILS.modelAnnotations,collection=ModelAnnotations.collect(annotations,detail,range,annotationFilters);renderAnnotationControls(collection);
+  $('#chart-period').textContent=`${range.start} — ${range.end}`;$('#drawdown-summary').textContent=rangeDrawdownSummary(m.drawdown);
+  drawChart(strategy,benchmark,detail,m.drawdown,collection,annotations);
+}
 function renderHistory() {
   const isCustom=historySource==='custom'&&customResult;
   $$('[data-history-source]').forEach(b=>{b.classList.toggle('active',b.dataset.historySource===historySource);b.setAttribute('aria-pressed',b.dataset.historySource===historySource);});
   $('#history-window-controls').hidden=!!isCustom;
   $('#history-caveat-copy').textContent=isCustom?'自定义规则由你设定。反复根据历史结果调整参数可能过拟合；源模型设计也参考过历史，2007–16不能视作完全独立样本外。历史回测不保证未来表现。':'十年数据参与了参数选择，属于样本内；2007–16年的信号设计也参考了历史，只能视作半样本外。回撤预算是筛选条件，不能保证未来回撤上限。';
   if(isCustom){renderCustomHistory();return;}
+  loadHistoryDetails();loadDailyHistory();
   const current=selected(), key=selection.window;
+  if(DAILY_HISTORY&&HISTORY_DETAILS?.strategies[current.id]){renderOriginalRange(current,HISTORY_DETAILS.strategies[current.id]);return;}
+  for(const id of ['history-range-start','history-range-end','history-range-from','history-range-to'])$('#'+id).disabled=true;
+  $('#history-range-status').textContent=dailyHistoryState==='error'?'逐日净值加载失败，请刷新重试。':'正在加载完整逐日净值与持仓记录…';
   $$('[data-window]').forEach(button=>{const active=button.dataset.window===key;button.classList.toggle('active',active);button.setAttribute('aria-pressed',active);});
   $('#history-title').innerHTML = `${displayName(current)} <span>vs 持有 QQQ</span>`;
   const m=current.metrics[key],b=DATA.benchmark.metrics[key];
@@ -160,24 +216,20 @@ function renderHistory() {
 }
 
 function renderCustomHistory() {
-  const result=customResult,m=result.metrics,b=result.benchmarkMetrics,detail=result.details,drawdown=m.drawdown;
+  const result=customResult,detail=result.details,range=currentChartRange(result.history.map(p=>p.date),'custom',result.range);
+  const strategy=result.history.slice(chartRange.first,chartRange.last+1),benchmark=result.benchmark.slice(chartRange.first,chartRange.last+1);
+  const m=HistoryChart.summarize(strategy,detail.trades),b=HistoryChart.summarize(benchmark),drawdown=m.drawdown;
   $('#history-title').innerHTML=`${escapeHTML(result.config.name)} <span>自定义 vs 持有 QQQ</span>`;
-  $('#history-metrics').innerHTML=[
-    {label:'年化收益',value:pct(m.cagr),note:`QQQ ${pct(b.cagr)}`},
-    {label:'最大回撤',value:pct(m.mdd),note:`QQQ ${pct(b.mdd)}`},
-    {label:'夏普比率',value:m.sharpe===null?'—':fmt(m.sharpe,2),note:`QQQ ${b.sharpe===null?'—':fmt(b.sharpe,2)}`},
-    {label:'年换手率',value:`${fmt(m.turn_yr)}×`,note:`${result.audit.rebalanceDays} 次实际调仓`}
-  ].map(m=>`<div class="history-metric"><span>${m.label}</span><strong>${m.value}</strong><small>${m.note}</small></div>`).join('');
-  $('#chart-period').textContent=`${result.range.start} — ${result.range.end}`;
+  renderRangeMetrics(m,b,`${m.rebalanceDays} 次实际调仓 · 所选区间`);
+  $('#chart-period').textContent=`${range.start} — ${range.end}`;
   loadHistoryDetails();
-  const sourceAnnotations=HISTORY_DETAILS?.modelAnnotations||{};
-  const customDescriptions={yellow:'最优拟合趋势下跌预警；自定义黄点锁定至TDC回落或QQQ价格修复条件满足，不按持续天数结束。',blue:'最优拟合实心蓝点；本次自定义规则不自动解锁其他预警，操作依本次设置。',blue_soft:'最优拟合空心蓝点；是否配置仓位依本次自定义设置。'};
+  const sourceAnnotations=HISTORY_DETAILS?.modelAnnotations||{},blueUnlock=result.config.rules.find(r=>r.id==='yellow').unlock.blueEnabled;
+  const customDescriptions={yellow:'最优拟合趋势下跌预警；自定义黄点按已启用的TDC、价格修复或实心蓝点条件解锁，不按持续天数结束。',blue:blueUnlock?'最优拟合实心蓝点；本次设置启用永久解除黄点锁定，解锁与是否实际抄底分开判断。':'最优拟合实心蓝点；本次设置未启用蓝点解除黄点锁定，操作依本次设置。',blue_soft:'最优拟合空心蓝点；不触发实心蓝点永久解锁，仓位依本次设置。'};
   const annotations={...sourceAnnotations,events:(sourceAnnotations.events||[]).map(e=>customDescriptions[e.type]?{...e,description:customDescriptions[e.type]}:e),readings:customReadings};
-  const collection=ModelAnnotations.collect(annotations,detail,result.range,annotationFilters);
-  renderAnnotationControls(collection);
-  $('#annotation-status').textContent=`自定义回测：${collection.trades.length} 个ETF仓位调整、${collection.events.length} 个模型标记。成交按所保存的设置生成，原策略持仓不参与计算。`;
-  $('#drawdown-summary').textContent=drawdown.value<0?`最大回撤 ${(drawdown.value*100).toFixed(2)}% · 峰值 ${drawdown.peakDate} → 谷底 ${drawdown.troughDate}${drawdown.recoveryDate?' · 修复 '+drawdown.recoveryDate:' · 区间内尚未修复'}`:'所选区间未出现净值回撤。';
-  drawChart(result.history,result.benchmark,detail,drawdown,collection,annotations);
+  const collection=ModelAnnotations.collect(annotations,detail,range,annotationFilters);renderAnnotationControls(collection);
+  $('#annotation-status').textContent=`自定义回测选区：${collection.trades.length} 个ETF仓位调整、${collection.events.length} 个模型标记。成交沿用本次生成的完整回测。`;
+  $('#drawdown-summary').textContent=rangeDrawdownSummary(drawdown);
+  drawChart(strategy,benchmark,detail,drawdown,collection,annotations);
 }
 
 function annotationMarkup(collection,normalized,plot) {
@@ -247,10 +299,12 @@ function drawChart(series,benchmark,details,drawdown,collection,annotations) {
     svg.setAttribute('aria-label',`策略与QQQ历史净值。最大回撤 ${(drawdown.value*100).toFixed(2)}%，峰值 ${drawdown.peakDate}，谷底 ${drawdown.troughDate}。`);
   }
   const marks=annotationMarkup(collection,normalized,{x,y,width,height,pad});
+  const archived=details?normalized.filter(p=>details.points[p.date]):normalized;
+  const hoverPoints=archived.length?archived:normalized;
   svg.innerHTML=`<defs><linearGradient id="chart-fill" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stop-color="#a1b49a" stop-opacity=".13"/><stop offset="100%" stop-color="#a1b49a" stop-opacity="0"/></linearGradient><clipPath id="plot-clip"><rect x="${pad.left}" y="${pad.top}" width="${width-pad.left-pad.right}" height="${height-pad.top-pad.bottom}"/></clipPath></defs>${marks.background}`+
     ticks.map(v=>`<line class="chart-grid" x1="${pad.left}" y1="${y(v)}" x2="${width-pad.right}" y2="${y(v)}"/><text x="${pad.left-10}" y="${y(v)+3}" text-anchor="end">${v}×</text>`).join('')+
     years.map(p=>`<text x="${x(p.date)}" y="${height-pad.bottom+17}" text-anchor="middle">${p.label}</text>`).join('')+
-    `<g clip-path="url(#plot-clip)"><path d="${path(normalized)} L${x(series.at(-1).date)},${height-pad.bottom} L${pad.left},${height-pad.bottom} Z" fill="url(#chart-fill)"/><path class="benchmark-line" d="${path(bench)}"/><path class="chart-line" d="${path(normalized)}"/>${drawdownMarkup}${marks.trades}<line id="hover-line" class="hover-line" y1="${pad.top}" y2="${height-pad.bottom}" visibility="hidden"/><circle id="hover-dot" r="3.5" fill="#52785d" stroke="white" stroke-width="2" visibility="hidden"/></g>${marks.tracks}<rect id="chart-hitbox" tabindex="0" role="slider" aria-label="历史净值点，方向键查看当时持仓与依据" aria-valuemin="0" aria-valuemax="${normalized.length-1}" aria-valuenow="0" x="${pad.left}" y="${pad.top}" width="${width-pad.left-pad.right}" height="${height-pad.top-8}" fill="transparent"/>`;
+    `<g clip-path="url(#plot-clip)"><path d="${path(normalized)} L${x(series.at(-1).date)},${height-pad.bottom} L${pad.left},${height-pad.bottom} Z" fill="url(#chart-fill)"/><path class="benchmark-line" d="${path(bench)}"/><path class="chart-line" d="${path(normalized)}"/>${drawdownMarkup}${marks.trades}<line id="hover-line" class="hover-line" y1="${pad.top}" y2="${height-pad.bottom}" visibility="hidden"/><circle id="hover-dot" r="3.5" fill="#52785d" stroke="white" stroke-width="2" visibility="hidden"/></g>${marks.tracks}<rect id="chart-hitbox" tabindex="0" role="slider" aria-label="历史净值点，方向键查看当时持仓与依据" aria-valuemin="0" aria-valuemax="${hoverPoints.length-1}" aria-valuenow="0" x="${pad.left}" y="${pad.top}" width="${width-pad.left-pad.right}" height="${height-pad.top-8}" fill="transparent"/>`;
   const hit=$('#chart-hitbox'),tooltip=$('#chart-tooltip');
   hit.setAttribute('aria-describedby','chart-tooltip');
   let activeIndex=-1,pinned=false;
@@ -263,8 +317,8 @@ function drawChart(series,benchmark,details,drawdown,collection,annotations) {
     tooltip.style.top=`${Math.max(gap,Math.min(top,window.innerHeight-box.height-gap))}px`;
   }
   function showIndex(index,event){
-    index=Math.max(0,Math.min(normalized.length-1,index));
-    const p=normalized[index],b=bench[HistoryChart.nearestIndex(bench,Date.parse(p.date))];
+    index=Math.max(0,Math.min(hoverPoints.length-1,index));
+    const p=hoverPoints[index],b=bench[HistoryChart.nearestIndex(bench,Date.parse(p.date))];
     $('#hover-line').setAttribute('x1',x(p.date));$('#hover-line').setAttribute('x2',x(p.date));$('#hover-line').setAttribute('visibility','visible');
     $('#hover-dot').setAttribute('cx',x(p.date));$('#hover-dot').setAttribute('cy',y(p.value));$('#hover-dot').setAttribute('visibility','visible');
     if(index!==activeIndex||tooltip.hidden){
@@ -285,9 +339,9 @@ function drawChart(series,benchmark,details,drawdown,collection,annotations) {
     const matrix=svg.getScreenCTM();if(!matrix)return;
     const point=new DOMPoint(event.clientX,event.clientY).matrixTransform(matrix.inverse());
     const timestamp=t0+Math.max(0,Math.min(1,(point.x-pad.left)/(width-pad.left-pad.right)))*(t1-t0);
-    let index=HistoryChart.nearestIndex(normalized,timestamp);
+    let index=HistoryChart.nearestIndex(hoverPoints,timestamp);
     const nearby=marks.targets.map(target=>({...target,distance:Math.hypot(target.x-point.x,target.y-point.y)})).filter(target=>target.distance<=8).sort((a,b)=>a.distance-b.distance)[0];
-    if(nearby)index=HistoryChart.nearestIndex(normalized,Date.parse(nearby.date));
+    if(nearby)index=HistoryChart.nearestIndex(hoverPoints,Date.parse(nearby.date));
     showIndex(index,event);
   }
   function hide(){pinned=false;tooltip.classList.remove('pinned');tooltip.hidden=true;$('#hover-line').setAttribute('visibility','hidden');$('#hover-dot').setAttribute('visibility','hidden');}
@@ -302,7 +356,7 @@ function drawChart(series,benchmark,details,drawdown,collection,annotations) {
     if(event.key==='Escape'){hide();return;}
     if(event.key==='Enter'||event.key===' '){event.preventDefault();showIndex(activeIndex<0?0:activeIndex);pinned=true;tooltip.classList.add('pinned');return;}
     let index=activeIndex<0?0:activeIndex;
-    if(event.key==='ArrowLeft')index--;else if(event.key==='ArrowRight')index++;else if(event.key==='Home')index=0;else if(event.key==='End')index=normalized.length-1;else return;
+    if(event.key==='ArrowLeft')index--;else if(event.key==='ArrowRight')index++;else if(event.key==='Home')index=0;else if(event.key==='End')index=hoverPoints.length-1;else return;
     event.preventDefault();showIndex(index);
   });
 

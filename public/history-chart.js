@@ -23,11 +23,32 @@
     dates.set(drawdown.troughDate, {...dates.get(drawdown.troughDate), date:drawdown.troughDate, nav:drawdown.troughNav});
     return [...dates.values()].sort((a,b) => a.date.localeCompare(b.date));
   }
+  function rangeIndices(dates,start,end,side='both'){
+    if(dates.length<2)throw new Error('至少需要两个交易日');
+    let first=start?dates.findIndex(d=>d>=start):0;if(first<0)first=dates.length-1;
+    let last=end?dates.findLastIndex(d=>d<=end):dates.length-1;if(last<0)last=0;
+    first=Math.max(0,Math.min(dates.length-2,first));last=Math.max(1,Math.min(dates.length-1,last));
+    if(first>=last){if(side==='end')last=Math.min(dates.length-1,first+1);else first=Math.max(0,last-1);}
+    if(first>=last)last=first+1;
+    return{first,last,start:dates[first],end:dates[last]};
+  }
+  function summarize(series,trades=[]){
+    if(series.length<2)throw new Error('区间至少保留两个交易日');
+    const first=series[0],last=series.at(-1),years=(Date.parse(last.date)-Date.parse(first.date))/86400000/365.25;
+    const returns=series.slice(1).map((p,i)=>p.nav/series[i].nav-1),mean=returns.reduce((a,b)=>a+b,0)/returns.length;
+    const vol=returns.length>1?Math.sqrt(returns.reduce((s,r)=>s+(r-mean)**2,0)/(returns.length-1))*Math.sqrt(252):0;
+    let peak=first,dd={value:0,peakDate:first.date,troughDate:first.date,peakNav:first.nav,troughNav:first.nav,recoveryDate:first.date};
+    for(const p of series){if(p.nav>=peak.nav)peak=p;const value=p.nav/peak.nav-1;if(value<dd.value)dd={value,peakDate:peak.date,troughDate:p.date,peakNav:peak.nav,troughNav:p.nav,recoveryDate:null};}
+    if(dd.value<0)dd.recoveryDate=series.find(p=>p.date>=dd.troughDate&&p.nav>=dd.peakNav)?.date||null;
+    const days=new Map();for(const t of trades){if(t.date<=first.date||t.date>last.date)continue;let d=days.get(t.date);if(!d){d={equity:0,cash:Math.abs(t.cashAfter-t.cashBefore)};days.set(t.date,d);}d.equity+=Math.abs(t.weightChange);}
+    const turnover=[...days.values()].reduce((s,d)=>s+(d.equity+d.cash)/2,0);
+    return{cagr:(last.nav/first.nav)**(1/years)-1,mdd:dd.value,sharpe:vol>0?mean*252/vol:null,vol,turn_yr:turnover/years,drawdown:dd,rebalanceDays:days.size};
+  }
   function tooltipHTML(point, benchmarkValue, detail, drawdown, loadState,annotationHTML='') {
     const landmark = point.date === drawdown?.troughDate ? '最大回撤谷底' : point.date === drawdown?.peakDate ? '最大回撤起点' : '';
     let html = `<div class="hover-heading"><strong>${escape(point.date)}</strong>${landmark ? `<em>${landmark}</em>` : ''}</div><div class="hover-nav"><span>策略净值 <b>${multiple(point.value)}</b></span><span>QQQ <b>${multiple(benchmarkValue)}</b></span></div>`;
     html += annotationHTML;
-    if (!detail) return html + `<p class="hover-note">${loadState === 'error' ? '历史持仓明细加载失败，可重试刷新页面。' : '正在加载历史持仓明细…'}</p>`;
+    if (!detail) return html + `<p class="hover-note">${loadState === 'error' ? '历史持仓明细加载失败，可重试刷新页面。' : loadState==='ready'?'此交易日暂无存档持仓明细，可扩大区间查看邻近记录。':'正在加载历史持仓明细…'}</p>`;
     html += `<div class="hover-position-title"><span>回测收盘持仓</span><b>${escape(detail.state)}</b></div><div class="hover-holdings">`;
     for (const [symbol, weight] of [...detail.holdings, [detail.cash<0?'融资负债':'BIL', detail.cash]]) {
       html += `<div><span>${escape(symbolName(symbol))}</span><strong>${percent(weight)}</strong></div>`;
@@ -39,5 +60,5 @@
     html += `<p class="hover-note">${detail.rebalanced ? '当日收盘已按前一交易日信号再平衡。' : `未触发${band}个百分点再平衡带，权重可能随价格浮动。`}<br>回测模拟持仓，非账户实盘持仓。</p>`;
     return html;
   }
-  root.HistoryChart = Object.freeze({nearestIndex, mergeLandmarks, tooltipHTML});
+  root.HistoryChart = Object.freeze({nearestIndex, mergeLandmarks, tooltipHTML,rangeIndices,summarize});
 })(window);
