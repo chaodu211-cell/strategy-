@@ -20,7 +20,7 @@
   const DATE=/^\d{4}-\d{2}-\d{2}$/;
   const yellowDefaults=()=>({tdcEnabled:true,tdcThreshold:60,priceEnabled:true,repairPct:3});
   const momentumDefaults=()=>({lookback:126,skip:21,frequency:'monthly',buffer:0});
-  function defaults(){return {schemaVersion:1,name:'我的双模型策略',start:'2016-10-21',end:'2026-10-22',asset:'QQQ',momentum:momentumDefaults(),baseExposure:1,allowSynthetic:false,band:.05,costMultiplier:1,financingAnnualRate:FINANCING_RATE,rules:RULES.map(r=>({id:r.id,action:r.action,value:r.value,...(r.conditional?{unlock:yellowDefaults()}:{days:r.days}),priority:r.priority,...(r.id==='blue'?{steps:r.steps}:{})}))};}
+  function defaults(){return {schemaVersion:1,name:'我的双模型策略',start:'2016-10-21',end:'2026-10-22',asset:'QQQ',momentum:momentumDefaults(),baseExposure:1,allowSynthetic:false,band:.05,costMultiplier:1,financingAnnualRate:FINANCING_RATE,rules:RULES.map(r=>({id:r.id,action:r.action,value:r.value,...(r.conditional?{unlock:yellowDefaults()}:{days:r.days}),priority:r.priority,...(r.id==='blue'?{steps:r.steps,onlyIfNotLower:true}:{})}))};}
   function validate(input,data){
     if(!input||input.schemaVersion!==1)throw new Error('自定义设置版本无效。');
     const c=copy(input);
@@ -42,6 +42,8 @@
       else bound(rule.value,0,3,r.label+'敞口/乘数');if(!r.conditional)bound(rule.days,1,252,r.label+'持续交易日',true);bound(rule.priority,1,99,r.label+'优先级',true);
       const steps=rule.steps===undefined?10:rule.steps;
       if(r.id==='blue')bound(steps,1,252,'蓝点分批数 n',true);
+      const onlyIfNotLower=rule.onlyIfNotLower===undefined?true:rule.onlyIfNotLower;
+      if(r.id==='blue'&&typeof onlyIfNotLower!=='boolean')throw new Error('蓝点敞口比较开关无效。');
       let unlock;
       if(r.conditional){
         unlock=rule.unlock===undefined?yellowDefaults():rule.unlock;
@@ -50,7 +52,7 @@
         if(rule.action!=='ignore'&&!unlock.tdcEnabled&&!unlock.priceEnabled)throw new Error('黄点至少启用一个解锁条件：TDC回落或价格修复。');
         unlock={tdcEnabled:unlock.tdcEnabled,tdcThreshold:unlock.tdcThreshold,priceEnabled:unlock.priceEnabled,repairPct:unlock.repairPct};
       }
-      return{id:r.id,action:rule.action,value:rule.value,...(r.conditional?{unlock}:{days:rule.action==='blue_ladder'?40:rule.days}),priority:rule.priority,...(r.id==='blue'?{steps}:{})};
+      return{id:r.id,action:rule.action,value:rule.value,...(r.conditional?{unlock}:{days:rule.action==='blue_ladder'?40:rule.days}),priority:rule.priority,...(r.id==='blue'?{steps,onlyIfNotLower}:{})};
     });
     return c;
   }
@@ -71,15 +73,27 @@
     }
     const yellowLock={locked:memory.locked,triggerDate:memory.triggerIndex===null?null:data.dates[memory.triggerIndex],releaseDate:memory.releaseIndex===null?null:data.dates[memory.releaseIndex],releaseReason:memory.releaseReason,tdc:finite(tdc)?tdc:null,qqqDrawdown52:finite(dd52)?dd52:null,unlock:{...unlock}};
     const active=RULES.map((r,i)=>({...cfg.rules[i],label:r.label,index:i,sourceIndex:last[i],state:!!r.state,active:r.conditional?memory.locked:r.state?!!(mask&(1<<i)):t-last[i]<(cfg.rules[i].action==='blue_ladder'?40:cfg.rules[i].days)})).filter(r=>r.active&&r.action!=='ignore').sort((a,b)=>b.priority-a.priority||a.index-b.index);
-    const winner=active[0];
     const momentum=cfg.asset==='momentum'?momentumChoice(data,cfg.momentum,t,last):null;
     let desired=cfg.baseExposure,selection=momentum?.selection||cfg.asset,blueLadder=null;
     const ladder=active.find(r=>r.action==='blue_ladder');
     if(ladder){
       let count=0;for(let i=Math.max(0,t-39);i<=t;i++)if(data.signals[i]&(1<<2))count++;
-      blueLadder={asset:selection,count,steps:ladder.steps??10,cap:ladder.value,target:ladder.value*Math.min(1,count/(ladder.steps??10)),windowStart:data.dates[Math.max(0,t-39)],windowEnd:data.dates[t],selected:winner===ladder};
+      blueLadder={asset:selection,count,steps:ladder.steps??10,cap:ladder.value,target:ladder.value*Math.min(1,count/(ladder.steps??10)),windowStart:data.dates[Math.max(0,t-39)],windowEnd:data.dates[t],selected:false};
     }
-    if(winner){if(winner.action==='flat')desired=0;else if(winner.action==='long')desired=winner.value;else if(winner.action==='short')desired=-winner.value;else if(winner.action==='blue_ladder'){desired=blueLadder.target;}else desired=cfg.baseExposure*winner.value;}
+    const ruleExposure=r=>!r?cfg.baseExposure:r.action==='flat'?0:r.action==='long'?r.value:r.action==='short'?-r.value:r.action==='blue_ladder'?blueLadder.target:cfg.baseExposure*r.value;
+    const ordinaryExposure=r=>Math.max(-3,Math.min(3,ruleExposure(r)));
+    const baseline=active.find(r=>r.id!=='blue'),blue=active.find(r=>r.id==='blue'&&['blue_ladder','long','scale'].includes(r.action));
+    let blueComparison=null;
+    if(blue){
+      const blueExposure=blue.action==='blue_ladder'?ruleExposure(blue):ordinaryExposure(blue),baselineExposure=ordinaryExposure(baseline);
+      const eligible=blueExposure+1e-12*Math.max(1,Math.abs(blueExposure),Math.abs(baselineExposure))>=baselineExposure;
+      blueComparison={enabled:blue.onlyIfNotLower!==false,blueExposure,baselineExposure,baselineState:baseline?.label||'常态',baselineRule:baseline?.id||null,eligible,selected:false};
+    }
+    const applicable=active.filter(r=>!(r===blue&&blueComparison?.enabled&&!blueComparison.eligible));
+    const winner=applicable[0];
+    if(blueLadder)blueLadder.selected=winner===ladder;
+    if(blueComparison)blueComparison.selected=winner===blue;
+    desired=ruleExposure(winner);
     const requested=desired;
     const financeAllowed=winner?.action==='blue_ladder';
     if(!financeAllowed)desired=Math.max(-3,Math.min(3,desired));
@@ -96,6 +110,10 @@
     const action=winner?`${winner.label}：${ACTIONS[winner.action]}${!['flat','ignore'].includes(winner.action)?' '+number(winner.value)+(winner.action==='scale'?'':'×'):''}`:`常态：${selection} ${number(cfg.baseExposure)}×`;
     const reasons=[winner?`${action}。${winner.id==='yellow'?'锁定至解锁条件满足，不按天数到期':winner.state?'条件保持时生效':`信号日 ${data.dates[winner.sourceIndex]}，有效 ${winner.days} 个交易日（含信号日）`}；优先级 ${winner.priority}。`:`当前无已启用的预警规则生效，按常态 ${selection} ${number(cfg.baseExposure)} 倍配置。`];
     if(momentum)reasons.push(momentum.reason);
+    if(blueComparison){
+      const c=blueComparison;
+      reasons.push(c.enabled?`蓝点敞口比较${c.eligible?'通过':'未通过'}：抄底目标 ${number(c.blueExposure)}× ${c.eligible?'≥':'<'} 当日${c.baselineState}目标 ${number(c.baselineExposure)}×（排除蓝点后按其他有效规则计算）。${!c.eligible?'不采用抄底配置，沿用当日配置。':c.selected?'本次按抄底配置执行。':'满足抄底门槛，但另有更高优先级规则生效。'}比较使用带方向的目标底层敞口，空头为负；不是ETF资金权重或漂移后的实际持仓。`:'蓝点敞口比较已关闭，按有效规则优先级决定是否采用抄底配置。');
+    }
     if(yellowRule.action!=='ignore'&&yellowLock.triggerDate){
       if(yellowLock.locked){
         const checks=[];
@@ -105,11 +123,11 @@
       }else reasons.push(`黄点已于 ${yellowLock.releaseDate} 信号日解除：${yellowLock.releaseReason}。解除后执行其他有效规则或常态；未出现新黄点前不重新锁定。`);
     }
     if(blueLadder)reasons.push(`${selection} 蓝点分批${blueLadder.selected?'生效':'候选'}：最近40个交易日（${blueLadder.windowStart} 至 ${blueLadder.windowEnd}，含当日）有 ${blueLadder.count} 个实心蓝点日；上限 x=${number(blueLadder.cap)} 倍，分 n=${blueLadder.steps} 次加满，目标 ${number(blueLadder.cap)} × min(1, ${blueLadder.count}/${blueLadder.steps}) = ${number(blueLadder.target)} 倍。旧蓝点移出窗口后不再计数，空心蓝点不计入。`);
-    if(active.length>1)reasons.push(`同时生效：${active.map(r=>r.label+'（'+r.priority+'）').join('、')}；只采用优先级最高者，同级按设置表顺序。`);
+    if(applicable.length>1)reasons.push(`同时生效：${applicable.map(r=>r.label+'（'+r.priority+'）').join('、')}；只采用优先级最高者，同级按设置表顺序。`);
     if(limited)reasons.push(`期望 ${number(requested)}×；按当时可交易工具与资金权重不超过100%的限制，实际目标 ${number(exposure)}×，余款持BIL。`);
     if(weight>1)reasons.push(`蓝点目标不截顶：${tool.symbol}目标资金权重 ${number(weight*100)}%，超出自有资金的 ${number((weight-1)*100)}% 记为融资负债；年利率固定5%，按实际日历天数/365计息，利息计入负债。`);
     if(tool?.synthetic)reasons.push(`${tool.symbol} 为研究合成序列，不是当时已上市ETF。`);
-    return{weights,exposure,desired:requested,selection,momentum,blueLadder,yellowLock,winner:winner?.id||null,state:winner?.label||'常态',reasons,limited,synthetic:!!tool?.synthetic};
+    return{weights,exposure,desired:requested,selection,momentum,blueLadder,blueComparison,yellowLock,winner:winner?.id||null,state:winner?.label||'常态',reasons,limited,synthetic:!!tool?.synthetic};
   }
   function momentumChoice(data,params,t,memory){
     const p={...momentumDefaults(),...params},date=data.dates[t],previous=data.dates[t-1];
@@ -174,7 +192,7 @@
       if(weights.some((w,j)=>w>1e-9&&data.symbols[j].synthetic))syntheticDays++;
       if(t===start)reasons.push('窗口首日收盘继承前一交易日目标，净值从1起算；首日不虚构成交，下一交易日起计收益和成本。');
       if(rebalanced&&rebalanceOnly)reasons.push(`目标不变，实际资金权重偏离超过 ${number(cfg.band*100)} 个百分点，按自定义再平衡带调仓。`);
-      points[date]={signalDate:data.dates[t-1],state:target.state,selection:target.selection,holdings:weights.flatMap((w,j)=>j!==bil&&w>1e-9?[[data.symbols[j].symbol,w]]:[]),cash:weights[bil],exposure,targetHoldings:target.weights.flatMap((w,j)=>j!==bil&&w>1e-9?[[data.symbols[j].symbol,w]]:[]),targetCash:target.weights[bil],targetExposure:target.exposure,rebalanced,reasons,nav,benchmarkNav,band:cfg.band,rebalanceOnly,blueLadder:target.blueLadder,yellowLock:target.yellowLock,financingInterest,financingAnnualRate:FINANCING_RATE};
+      points[date]={signalDate:data.dates[t-1],state:target.state,selection:target.selection,holdings:weights.flatMap((w,j)=>j!==bil&&w>1e-9?[[data.symbols[j].symbol,w]]:[]),cash:weights[bil],exposure,targetHoldings:target.weights.flatMap((w,j)=>j!==bil&&w>1e-9?[[data.symbols[j].symbol,w]]:[]),targetCash:target.weights[bil],targetExposure:target.exposure,rebalanced,reasons,nav,benchmarkNav,band:cfg.band,rebalanceOnly,blueLadder:target.blueLadder,blueComparison:target.blueComparison,yellowLock:target.yellowLock,financingInterest,financingAnnualRate:FINANCING_RATE};
       history.push({date,nav});benchmark.push({date,nav:benchmarkNav});turnover.push(turn);
     }
     const metrics=stats(history,turnover),benchmarkMetrics=stats(benchmark,turnover.map(()=>0));

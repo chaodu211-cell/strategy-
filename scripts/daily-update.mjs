@@ -62,7 +62,10 @@ try{
     state.customRows=extra;
     for(const r of extra){panel.dates.push(r.date);panel.returns.push(r.returns);panel.costs.push(r.costs);panel.tradable.push(r.tradable);panel.signals.push(r.signals);panel.yellowContext.tdc.push(r.tdc);panel.yellowContext.qqqDrawdown52.push(r.dd52);}
     panel.meta.end=panel.dates.at(-1);
-    const custom=C.validate({...config.custom,end:panel.meta.end},panel),memory=C.RULES.map(()=>-1e9);let latest;
+    // Registered v1 rules predate the comparison switch; pin their original behavior.
+    // Browser defaults can change without silently changing a running strategy version.
+    const registered={...config.custom,rules:config.custom.rules.map(r=>r.id==='blue'?{...r,onlyIfNotLower:r.onlyIfNotLower??false}:r)};
+    const custom=C.validate({...registered,end:panel.meta.end},panel),memory=C.RULES.map(()=>-1e9);let latest;
     for(let t=0;t<panel.dates.length;t++)latest=C.resolveTarget(panel,custom,t,memory);
     targets['custom-momentum']={signalDate:panel.dates.at(-1),weights:Object.fromEntries(panel.symbols.map((s,j)=>[s.symbol,latest.weights[j]]).filter(([,w])=>w!==0)),selection:latest.selection,state:latest.state,reasons:latest.reasons};
     state=queueTargets(state,targets,new Date().toISOString());
