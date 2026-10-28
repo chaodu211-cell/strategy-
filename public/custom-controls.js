@@ -45,6 +45,7 @@
       }
       for(const [key,field] of [['momentumLookback','lookback'],['momentumSkip','skip'],['momentumFrequency','frequency'],['momentumBuffer','buffer']])form.elements.namedItem(key).value=field==='buffer'?c.momentum[field]*100:c.momentum[field];
       form.elements.namedItem('allowSynthetic').checked=c.allowSynthetic;
+      $('#bear200-enabled').checked=c.bear200Enabled===true;
       for(const r of c.rules){const row=form.querySelector(`[data-custom-rule="${r.id}"]`);for(const key of ['action','value','days','priority']){const input=row.querySelector(`[data-rule-field="${key}"]`);if(input)input.value=r[key];}}
       $('#ccc-top-stack').checked=c.rules.find(r=>r.id==='ccc_top').stackWithCredit!==false;
       $('#rule-blue-steps').value=c.rules.find(r=>r.id==='blue').steps??10;
@@ -57,7 +58,7 @@
     }
     function read(){
       const v=key=>form.elements.namedItem(key).value;
-      return{schemaVersion:1,name:v('name'),start:v('start'),end:v('end'),asset:v('asset'),momentum:{lookback:Number(v('momentumLookback')),skip:Number(v('momentumSkip')),frequency:v('momentumFrequency'),buffer:Number(v('momentumBuffer'))/100},baseExposure:Number(v('baseExposure')),band:Number(v('band'))/100,costMultiplier:Number(v('costMultiplier')),allowSynthetic:form.elements.namedItem('allowSynthetic').checked,rules:C.RULES.map(r=>{const row=form.querySelector(`[data-custom-rule="${r.id}"]`),val=k=>row.querySelector(`[data-rule-field="${k}"]`)?.value;return{id:r.id,action:val('action'),value:Number(val('value')),...(r.conditional?{unlock:{tdcEnabled:$('#yellow-tdc-enabled').checked,tdcThreshold:Number($('#yellow-tdc-threshold').value),priceEnabled:$('#yellow-price-enabled').checked,blueEnabled:$('#yellow-blue-enabled').checked,repairPct:Number($('#yellow-repair-pct').value)}}:{days:r.state?1:Number(val('days'))}),priority:Number(val('priority')),...(r.id==='ccc_top'?{stackWithCredit:$('#ccc-top-stack').checked}:{}),...(r.id==='blue'?{asset:$('#rule-blue-asset').value,steps:Number($('#rule-blue-steps').value),onlyIfNotLower:$('#blue-only-if-not-lower').checked}:{})};})};
+      return{schemaVersion:1,name:v('name'),start:v('start'),end:v('end'),asset:v('asset'),bear200Enabled:$('#bear200-enabled').checked,momentum:{lookback:Number(v('momentumLookback')),skip:Number(v('momentumSkip')),frequency:v('momentumFrequency'),buffer:Number(v('momentumBuffer'))/100},baseExposure:Number(v('baseExposure')),band:Number(v('band'))/100,costMultiplier:Number(v('costMultiplier')),allowSynthetic:form.elements.namedItem('allowSynthetic').checked,rules:C.RULES.map(r=>{const row=form.querySelector(`[data-custom-rule="${r.id}"]`),val=k=>row.querySelector(`[data-rule-field="${k}"]`)?.value;return{id:r.id,action:val('action'),value:Number(val('value')),...(r.conditional?{unlock:{tdcEnabled:$('#yellow-tdc-enabled').checked,tdcThreshold:Number($('#yellow-tdc-threshold').value),priceEnabled:$('#yellow-price-enabled').checked,blueEnabled:$('#yellow-blue-enabled').checked,repairPct:Number($('#yellow-repair-pct').value)}}:{days:r.state?1:Number(val('days'))}),priority:Number(val('priority')),...(r.id==='ccc_top'?{stackWithCredit:$('#ccc-top-stack').checked}:{}),...(r.id==='blue'?{asset:$('#rule-blue-asset').value,steps:Number($('#rule-blue-steps').value),onlyIfNotLower:$('#blue-only-if-not-lower').checked}:{})};})};
     }
     function dirty(){syncRows();if(busy)return;status.textContent=lastResult?'设置已修改。图中仍为上次生成的回测，请点击“生成回测”应用新设置。':'设置完成后点击“生成回测”。';status.classList.remove('error');$('#custom-stale').hidden=!lastResult;}
     function load(){
@@ -87,7 +88,7 @@
         $('#export-custom-settings').disabled=false;$('#export-custom-daily').disabled=false;
         const a=result.audit;
         $('#custom-summary').hidden=false;
-        $('#custom-summary').innerHTML=`<strong>${esc(result.config.name)}</strong><span>${result.range.start} — ${result.range.end} · ${a.days.toLocaleString()} 个交易日 · ${a.rebalanceDays} 次调仓</span><p>${a.limitedDays?`${a.limitedDays} 日的目标受当时可交易工具及100%资金权重限制，已按实际可实现敞口计算。`:'全部目标均可按所选工具及蓝点融资规则实现。'}${a.syntheticDays?` 含 ${a.syntheticDays} 日合成ETF持仓。`:' 未持有合成ETF。'}${a.financingDays?` 融资持仓 ${a.financingDays} 日，年利率固定5%，累计利息相当于初始资金的 ${(a.financingInterestPaid*100).toFixed(2)}%。`:''}</p>`;
+        $('#custom-summary').innerHTML=`<strong>${esc(result.config.name)}</strong><span>${result.range.start} — ${result.range.end} · ${a.days.toLocaleString()} 个交易日 · ${a.rebalanceDays} 次调仓</span><p>${a.limitedDays?`${a.limitedDays} 日的目标受当时可交易工具及100%资金权重限制，已按实际可实现敞口计算。`:'全部目标均可按所选工具及蓝点融资规则实现。'}${result.config.bear200Enabled?` 熊市200日线清仓生效 ${a.bear200Days} 个交易日。`:''}${a.syntheticDays?` 含 ${a.syntheticDays} 日合成ETF持仓。`:' 未持有合成ETF。'}${a.financingDays?` 融资持仓 ${a.financingDays} 日，年利率固定5%，累计利息相当于初始资金的 ${(a.financingInterestPaid*100).toFixed(2)}%。`:''}</p>`;
         status.textContent=`回测已生成，结果显示在下方历史图。${saved?'设置已保存在本浏览器。':'本浏览器无法保存设置，可下载设置备份。'}`;
         onResult(result,C.readings(source));
         $('#history').scrollIntoView({behavior:'smooth',block:'start'});

@@ -1,0 +1,33 @@
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import '../public/custom-backtest.js';
+const C=globalThis.CustomBacktest,clone=structuredClone;
+const dates=Array.from({length:225},(_,i)=>new Date(Date.UTC(2007,0,3+i)).toISOString().slice(0,10));
+const prices=dates.map((_,i)=>i<200?100:i===200?90:i===201?80:110);
+const data={schemaVersion:1,meta:{start:dates[0],end:dates.at(-1)},signalTypes:C.RULES.map(r=>r.id),dates,symbols:[{symbol:'QQQ',underlying:'QQQ',leverage:1},{symbol:'TQQQ',underlying:'QQQ',leverage:3},{symbol:'SOXX',underlying:'SOXX',leverage:1},{symbol:'SOXL',underlying:'SOXX',leverage:3},{symbol:'PSQ',underlying:'QQQ',leverage:-1},{symbol:'BIL',underlying:'BIL',leverage:0}],returns:prices.map((p,i)=>{const r=i?p/prices[i-1]-1:0;return[r,r*3,.001,.003,-r,0];}),costs:dates.map(()=>[.001,.001,.001,.001,.001,0]),tradable:dates.map(()=>63),signals:dates.map(()=>0)};
+function config(){const c=C.defaults();c.start=dates[198];c.end=dates.at(-1);c.bear200Enabled=true;c.band=0;c.costMultiplier=0;for(const r of c.rules)r.action='ignore';return c;}
+const near=(a,b)=>assert.ok(Math.abs(a-b)<1e-11,`${a} != ${b}`);
+const run=C.run(data,config()),p=i=>run.details.points[dates[i]];
+assert.equal(C.defaults().bear200Enabled,false);const legacy=config();delete legacy.bear200Enabled;assert.equal(C.validate(legacy).bear200Enabled,false);
+const off=config();off.bear200Enabled=false;assert.deepEqual(C.run(data,legacy).history,C.run(data,off).history,'Missing flag preserves the original curve');
+assert.equal(C.bearTrend200(data,198).ready,false);near(C.bearTrend200(data,199).priceToMA,1);assert.equal(C.bearTrend200(data,199).below,false,'Equal to MA is not a bear state');
+assert.equal(p(200).state,'常态','Signal-day decline cannot cause same-close liquidation');
+assert.equal(p(201).state,'熊市200日线清仓');assert.equal(p(201).holdings.length,0);near(p(201).cash,1);near(p(201).targetExposure,0);near(p(201).nav,.8);
+assert.equal(p(202).holdings.length,0,'Recovery close still uses the previous bear target');
+assert.equal(p(203).state,'常态');assert.equal(p(203).targetHoldings[0][0],'TQQQ');near(p(203).targetExposure,1);
+assert.equal(run.audit.bear200Days,2);assert.ok(p(201).reasons.some(r=>r.includes('清仓生效')&&r.includes('200日均线')));
+assert.equal(run.details.trades.find(t=>t.type==='sell').date,dates[201]);
+const charged=config();charged.costMultiplier=1;assert.ok(C.run(data,charged).history.at(-1).nav<run.history.at(-1).nav,'Liquidation and re-entry charge the original fees');
+const semi=config();semi.asset='SOXX';assert.equal(C.run(data,semi).details.points[dates[201]].holdings.length,0,'QQQ remains the reference for a semiconductor portfolio');
+const active=clone(data);active.signals[199]=1<<4;active.signals[200]=(1<<2)|(1<<5)|(1<<8);
+const rules=config();Object.assign(rules.rules[2],{action:'blue_ladder',value:6,steps:1,priority:99});Object.assign(rules.rules[4],{action:'flat',priority:99,unlock:{tdcEnabled:false,priceEnabled:false,blueEnabled:true,tdcThreshold:60,repairPct:3}});Object.assign(rules.rules[5],{action:'scale',value:.75,days:63,priority:99});Object.assign(rules.rules[8],{action:'scale',value:.3,priority:99});
+const combined=C.run(active,rules),cp=i=>combined.details.points[dates[i]];
+assert.equal(cp(201).state,'熊市200日线清仓');assert.equal(cp(201).blueLadder.selected,false);assert.equal(cp(201).creditStack.selected,false);assert.equal(cp(201).yellowLock.locked,false,'Yellow can unlock while bear liquidation is active');near(cp(201).blueComparison.baselineExposure,0);
+assert.equal(cp(203).state,'实心蓝点','Restored trend resumes the still-live blue window without resetting it');assert.equal(cp(203).blueLadder.count,1);near(cp(203).targetExposure,6);
+const inverse=config();Object.assign(inverse.rules[0],{action:'short',value:1,days:30,priority:99});const inverseData=clone(data);inverseData.signals[199]=1;assert.equal(C.run(inverseData,inverse).details.points[dates[201]].holdings.length,0,'Liquidate inverse ETFs too');
+const future=clone(data);future.returns[210]=[100,100,100,100,100,0];future.signals[210]=511;assert.deepEqual(C.run(future,config()).history.slice(0,10),run.history.slice(0,10),'Future prices/signals cannot change earlier bear decisions');
+const scaled=clone(data);scaled.returns[1][0]=.5;near(C.bearTrend200(scaled,201).priceToMA,C.bearTrend200(data,201).priceToMA,'Price scale before the lookback cancels');
+const bad=config();bad.bear200Enabled='yes';assert.throws(()=>C.validate(bad));const missing=clone(data);missing.returns[200][0]=null;assert.throws(()=>C.run(missing,config()),/熊市200日线缺少有效/);
+const real=JSON.parse(readFileSync(new URL('../public/custom-inputs.json',import.meta.url))),qi=real.symbols.findIndex(s=>s.symbol==='QQQ');
+let price=1,closes=[];for(let i=0;i<real.dates.length;i++){if(i)price*=1+real.returns[i][qi];closes.push(price);if(i>=199){const avg=closes.slice(i-199,i+1).reduce((a,b)=>a+b,0)/200;near(C.bearTrend200(real,i).priceToMA,price/avg);}}
+console.log(JSON.stringify({bear200:true,full200Closes:true,strictBelowAndEqualityRecovery:true,nextClose:true,fees:true,QQQReferenceForAllAssets:true,overridesBlueCreditAndInverse:true,stateContinuesDuringBear:true,noLookahead:true,legacyOff:true,realDaysVerified:real.dates.length-199}));
