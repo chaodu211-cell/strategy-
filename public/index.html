@@ -4,7 +4,7 @@
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#172731">
 <title>双模型策略 · 持仓与研究</title>
 <meta name="description" content="读懂最优拟合与 CCC 利差信号，查看六种双模型策略的目标持仓、配置原因与历史检验。">
-<link rel="icon" href="./favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="./style.css">
+<link rel="icon" href="./favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="./style.css?v=20261029-layout-fix">
 </head>
 <body>
 <aside class="sidebar">
@@ -34,13 +34,13 @@
 <div class="monitor-panel panel" aria-label="GitHub 仓库监控"><div class="monitor-top"><div><span class="monitor-live-dot" id="monitor-dot"></span><strong>仓库持续监控</strong><span class="monitor-frequency">每60秒检查 · 跟随源模型日频更新</span></div><span id="last-checked">首次检查中</span></div><div class="repo-status-grid" id="repo-status-grid"><div class="repo-loading">正在读取最优拟合与 CCC 利差的发布状态…</div></div><div class="monitor-warnings" id="monitor-warnings" hidden></div></div>
 </section>
 <section id="holdings" class="anchor-section holdings-section">
-<div class="section-heading"><div><p class="eyebrow">01 / CURRENT ALLOCATION</p><h2>当前合理持仓</h2><p>点击策略可查看完整规则、配置方式与当前执行依据。</p></div><div class="segmented" role="group" aria-label="策略版本"><button data-family="simple" class="active" aria-pressed="true">简明版</button><button data-family="fitted" aria-pressed="false">拟合版</button></div></div>
-<div class="risk-options" id="risk-options"></div><div class="strategy-entry"><button id="open-strategy-details" class="text-link" aria-haspopup="dialog" aria-controls="strategy-dialog">查看所选策略的完整说明 ↗</button></div>
+<div class="section-heading"><div><p class="eyebrow">01 / CURRENT ALLOCATION</p><h2>当前合理持仓</h2><p>点击策略可查看当前仓位与依据。</p></div><div class="segmented" role="group" aria-label="策略版本"><button data-family="simple" class="active" aria-pressed="true">简明版</button><button data-family="fitted" aria-pressed="false">拟合版</button></div></div>
+<div class="risk-options" id="risk-options"></div><div class="strategy-entry"><button id="open-strategy-details" class="text-link" aria-haspopup="dialog" aria-controls="strategy-dialog">查看所选策略的仓位与依据 ↗</button></div>
 <div class="allocation-grid">
 <article class="panel allocation-panel"><div class="panel-top"><div><h3 id="allocation-title">简明·均衡</h3><p class="allocation-date" id="allocation-date">信号日 —</p></div><span class="tag" id="position-status">规则目标</span></div><div class="allocation-body"><div class="donut-wrap"><div class="donut" id="allocation-donut"><div class="donut-hole"><span>底层风险敞口</span><strong id="exposure-value">—</strong><small id="underlying-label">纳斯达克 100</small></div></div></div><div class="allocation-legend" id="allocation-legend"></div></div><div class="allocation-footer"><span>资金权重 ≠ 底层敞口</span><span id="exposure-formula">—</span></div></article>
 <article class="panel reasons-panel"><div class="panel-top"><h3>为什么这样持仓？</h3><span class="small-muted">按策略优先级解释</span></div><div class="reason-list" id="reason-list"></div><div class="reason-result" id="reason-result"></div></article>
 </div>
-<div class="all-holdings panel"><div class="panel-top"><h3>六种策略，一眼看清</h3><span class="small-muted">点击任意一行查看完整策略</span></div><div class="table-scroll"><table><thead><tr><th>策略</th><th>权益工具 / 资金权重</th><th>现金类 BIL</th><th>底层敞口</th><th>信号日</th><th>当前依据</th></tr></thead><tbody id="holdings-table"></tbody></table></div></div>
+<div class="all-holdings panel"><div class="panel-top"><h3>六种策略，一眼看清</h3><span class="small-muted">点击任意一行查看仓位与依据</span></div><div class="table-scroll"><table><thead><tr><th>策略</th><th>权益工具 / 资金权重</th><th>现金类 BIL</th><th>底层敞口</th><th>信号日</th><th>当前依据</th></tr></thead><tbody id="holdings-table"></tbody></table></div></div>
 </section>
 <section id="signals" class="anchor-section">
 <div class="section-heading"><div><p class="eyebrow">02 / MODEL READINGS</p><h2>两个模型，各司其职</h2><p>模型输出信号与约束，组合策略将它们转换成具体持仓。</p></div><span class="section-note">信号与仓位之间，都有规则。</span></div>
@@ -88,6 +88,6 @@
 <footer><a class="footer-brand" href="#overview">双模 <span>STRATEGY LAB</span></a><span>用规则理解风险，用证据审视策略。</span><span id="footer-date">历史研究 · 2026-10-22</span></footer>
 <div class="loading-error" id="loading-error" hidden>数据载入失败。请刷新页面，或检查 data.json 文件。</div>
 </main></div><div class="toast" id="toast" role="status" hidden></div>
-<dialog id="strategy-dialog" class="strategy-dialog" aria-labelledby="strategy-dialog-title" aria-describedby="strategy-dialog-description"><div class="strategy-dialog-shell"><header class="strategy-dialog-header"><div><p class="eyebrow">STRATEGY PLAYBOOK</p><h2 id="strategy-dialog-title">策略详情</h2><p id="strategy-dialog-description">完整交易规则与配置依据</p></div><button class="strategy-close" data-close-strategy aria-label="关闭策略详情">×</button></header><div id="strategy-dialog-body" class="strategy-dialog-body"></div><footer class="strategy-dialog-footer"><a href="./research.md" download>下载完整策略研究说明 ↓</a><button class="button" data-strategy-history>查看本策略历史图 →</button></footer></div></dialog>
-<script src="./strategy-details.js" defer></script><script src="./model-annotations.js" defer></script><script src="./history-chart.js" defer></script><script src="./custom-backtest.js" defer></script><script src="./custom-controls.js" defer></script><script src="./app.js" defer></script><script src="./forward.js" defer></script>
+<dialog id="strategy-dialog" class="strategy-dialog" aria-labelledby="strategy-dialog-title" aria-describedby="strategy-dialog-description"><div class="strategy-dialog-shell"><header class="strategy-dialog-header"><div><p class="eyebrow">STRATEGY PLAYBOOK</p><h2 id="strategy-dialog-title">策略详情</h2><p id="strategy-dialog-description">当前仓位与依据</p></div><button class="strategy-close" data-close-strategy aria-label="关闭策略详情">×</button></header><div id="strategy-dialog-body" class="strategy-dialog-body"></div><footer class="strategy-dialog-footer"><button class="button" data-strategy-history>查看本策略历史图 →</button></footer></div></dialog>
+<script src="./strategy-details.js?v=20261029-brief" defer></script><script src="./model-annotations.js" defer></script><script src="./history-chart.js" defer></script><script src="./custom-backtest.js" defer></script><script src="./custom-controls.js" defer></script><script src="./app.js?v=20261029-brief" defer></script><script src="./forward.js" defer></script>
 </body></html>
