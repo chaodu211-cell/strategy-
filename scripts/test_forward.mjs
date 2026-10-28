@@ -8,6 +8,7 @@ import './test_credit_stack.mjs';
 import './test_bear200.mjs';
 import './test_blue_unlock.mjs';
 import './test_chart_range.mjs';
+import './test_custom_registration.mjs';
 const C=globalThis.CustomBacktest;
 const dates=Array.from({length:155},(_,i)=>new Date(Date.UTC(2025,0,1+i)).toISOString().slice(0,10));
 const panel={dates,symbols:[{symbol:'QQQ'},{symbol:'SOXX'}],returns:dates.map((_,i)=>[i<135?.001:.8,.002])};
