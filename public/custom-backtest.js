@@ -20,7 +20,7 @@
   const DATE=/^\d{4}-\d{2}-\d{2}$/;
   const yellowDefaults=()=>({tdcEnabled:true,tdcThreshold:60,priceEnabled:true,repairPct:3,blueEnabled:true});
   const momentumDefaults=()=>({lookback:126,skip:21,frequency:'monthly',buffer:0});
-  function defaults(){return {schemaVersion:1,name:'我的双模型策略',start:'2016-10-21',end:'2026-10-22',asset:'QQQ',momentum:momentumDefaults(),baseExposure:1,allowSynthetic:false,band:.05,costMultiplier:1,financingAnnualRate:FINANCING_RATE,rules:RULES.map(r=>({id:r.id,action:r.action,value:r.value,...(r.conditional?{unlock:yellowDefaults()}:{days:r.days}),priority:r.priority,...(r.id==='blue'?{steps:r.steps,onlyIfNotLower:true}:{})}))};}
+  function defaults(){return {schemaVersion:1,name:'我的双模型策略',start:'2016-10-21',end:'2026-10-22',asset:'QQQ',momentum:momentumDefaults(),baseExposure:1,allowSynthetic:false,band:.05,costMultiplier:1,financingAnnualRate:FINANCING_RATE,rules:RULES.map(r=>({id:r.id,action:r.action,value:r.value,...(r.conditional?{unlock:yellowDefaults()}:{days:r.days}),priority:r.priority,...(r.id==='blue'?{steps:r.steps,onlyIfNotLower:true,asset:'inherit'}:{})}))};}
   function validate(input,data){
     if(!input||input.schemaVersion!==1)throw new Error('自定义设置版本无效。');
     const c=copy(input);
@@ -28,7 +28,7 @@
     c.name=c.name.trim();c.financingAnnualRate=FINANCING_RATE;delete c.toolMode;
     for(const key of ['start','end'])if(!DATE.test(c[key]||'')||!Number.isFinite(Date.parse(c[key]))||new Date(c[key]+'T00:00:00Z').toISOString().slice(0,10)!==c[key])throw new Error('请选择有效的回测起止日期。');
     if(c.start>c.end||c.start<(data?.meta.start||'2007-01-03')||c.end>(data?.meta.end||'2026-10-22'))throw new Error(`回测日期须在 ${data?.meta.start||'2007-01-03'} 至 ${data?.meta.end||'2026-10-22'} 之间，且结束日不早于开始日。`);
-    if(!['QQQ','SOXX','momentum'].includes(c.asset)||typeof c.allowSynthetic!=='boolean')throw new Error('常态与蓝点底层设置无效。');
+    if(!['QQQ','SOXX','momentum'].includes(c.asset)||typeof c.allowSynthetic!=='boolean')throw new Error('常态底层设置无效。');
     const bound=(x,min,max,label,integer=false)=>{if(typeof x!=='number'||!Number.isFinite(x)||x<min||x>max||(integer&&!Number.isInteger(x)))throw new Error(`${label}须为 ${min}–${max}${integer?' 的整数':' 之间的数值'}。`);};
     c.momentum={...momentumDefaults(),...c.momentum};
     bound(c.momentum.lookback,22,504,'动量观察期',true);bound(c.momentum.skip,0,c.momentum.lookback-1,'剔除最近交易日',true);bound(c.momentum.buffer,0,1,'换品缓冲');
@@ -44,6 +44,8 @@
       if(r.id==='blue')bound(steps,1,252,'蓝点分批数 n',true);
       const onlyIfNotLower=rule.onlyIfNotLower===undefined?true:rule.onlyIfNotLower;
       if(r.id==='blue'&&typeof onlyIfNotLower!=='boolean')throw new Error('蓝点敞口比较开关无效。');
+      const asset=rule.asset??'inherit';
+      if(r.id==='blue'&&!['inherit','momentum','QQQ','SOXX'].includes(asset))throw new Error('蓝点分批标的须为动量、QQQ、SOXX或跟随常态。');
       let unlock;
       if(r.conditional){
         if(rule.unlock!==undefined&&(!rule.unlock||typeof rule.unlock!=='object'))throw new Error('黄点解锁开关无效。');
@@ -53,7 +55,7 @@
         if(rule.action!=='ignore'&&!unlock.tdcEnabled&&!unlock.priceEnabled&&!unlock.blueEnabled)throw new Error('黄点至少启用一个解锁条件：TDC回落、价格修复或实心蓝点永久解锁。');
         unlock={tdcEnabled:unlock.tdcEnabled,tdcThreshold:unlock.tdcThreshold,priceEnabled:unlock.priceEnabled,repairPct:unlock.repairPct,blueEnabled:unlock.blueEnabled};
       }
-      return{id:r.id,action:rule.action,value:rule.value,...(r.conditional?{unlock}:{days:rule.action==='blue_ladder'?40:rule.days}),priority:rule.priority,...(r.id==='blue'?{steps,onlyIfNotLower}:{})};
+      return{id:r.id,action:rule.action,value:rule.value,...(r.conditional?{unlock}:{days:rule.action==='blue_ladder'?40:rule.days}),priority:rule.priority,...(r.id==='blue'?{steps,onlyIfNotLower,asset}:{})};
     });
     return c;
   }
@@ -75,12 +77,14 @@
     }
     const yellowLock={locked:memory.locked,triggerDate:memory.triggerIndex===null?null:data.dates[memory.triggerIndex],releaseDate:memory.releaseIndex===null?null:data.dates[memory.releaseIndex],releaseReason:memory.releaseReason,tdc:finite(tdc)?tdc:null,qqqDrawdown52:finite(dd52)?dd52:null,unlock:{...unlock}};
     const active=RULES.map((r,i)=>({...cfg.rules[i],label:r.label,index:i,sourceIndex:last[i],state:!!r.state,active:r.conditional?memory.locked:r.state?!!(mask&(1<<i)):t-last[i]<(cfg.rules[i].action==='blue_ladder'?40:cfg.rules[i].days)})).filter(r=>r.active&&r.action!=='ignore').sort((a,b)=>b.priority-a.priority||a.index-b.index);
-    const momentum=cfg.asset==='momentum'?momentumChoice(data,cfg.momentum,t,last):null;
-    let desired=cfg.baseExposure,selection=momentum?.selection||cfg.asset,blueLadder=null;
+    const blueAsset=cfg.rules[2].asset??'inherit';
+    const momentum=cfg.asset==='momentum'||(cfg.rules[2].action==='blue_ladder'&&blueAsset==='momentum')?momentumChoice(data,cfg.momentum,t,last):null;
+    let desired=cfg.baseExposure,selection=cfg.asset==='momentum'?momentum.selection:cfg.asset,blueLadder=null;
     const ladder=active.find(r=>r.action==='blue_ladder');
+    const ladderAsset=blueAsset==='inherit'?selection:blueAsset==='momentum'?momentum.selection:blueAsset;
     if(ladder){
       let count=0;for(let i=Math.max(0,t-39);i<=t;i++)if(data.signals[i]&(1<<2))count++;
-      blueLadder={asset:selection,count,steps:ladder.steps??10,cap:ladder.value,target:ladder.value*Math.min(1,count/(ladder.steps??10)),windowStart:data.dates[Math.max(0,t-39)],windowEnd:data.dates[t],selected:false};
+      blueLadder={asset:ladderAsset,assetMode:blueAsset,count,steps:ladder.steps??10,cap:ladder.value,target:ladder.value*Math.min(1,count/(ladder.steps??10)),windowStart:data.dates[Math.max(0,t-39)],windowEnd:data.dates[t],selected:false};
     }
     const ruleExposure=r=>!r?cfg.baseExposure:r.action==='flat'?0:r.action==='long'?r.value:r.action==='short'?-r.value:r.action==='blue_ladder'?blueLadder.target:cfg.baseExposure*r.value;
     const ordinaryExposure=r=>Math.max(-3,Math.min(3,ruleExposure(r)));
@@ -93,7 +97,7 @@
     }
     const applicable=active.filter(r=>!(r===blue&&blueComparison?.enabled&&!blueComparison.eligible));
     const winner=applicable[0];
-    if(blueLadder)blueLadder.selected=winner===ladder;
+    if(blueLadder){blueLadder.selected=winner===ladder;if(blueLadder.selected)selection=ladderAsset;}
     if(blueComparison)blueComparison.selected=winner===blue;
     desired=ruleExposure(winner);
     const requested=desired;
@@ -125,7 +129,7 @@
         reasons.push(`黄点锁定中，自 ${yellowLock.triggerDate} 触发；${checks.join('；')}。任一已启用条件满足即解除，缺失值不视为达标；黄点当日优先触发，下一信号日起检查解除。实心蓝点解锁与蓝点是否实际成交分开判断。`);
       }else reasons.push(`黄点已于 ${yellowLock.releaseDate} 信号日解除：${yellowLock.releaseReason}。解除后执行其他有效规则或常态；未出现新黄点前不重新锁定。`);
     }
-    if(blueLadder)reasons.push(`${selection} 蓝点分批${blueLadder.selected?'生效':'候选'}：最近40个交易日（${blueLadder.windowStart} 至 ${blueLadder.windowEnd}，含当日）有 ${blueLadder.count} 个实心蓝点日；上限 x=${number(blueLadder.cap)} 倍，分 n=${blueLadder.steps} 次加满，目标 ${number(blueLadder.cap)} × min(1, ${blueLadder.count}/${blueLadder.steps}) = ${number(blueLadder.target)} 倍。旧蓝点移出窗口后不再计数，空心蓝点不计入。`);
+    if(blueLadder)reasons.push(`${blueLadder.asset} 蓝点分批${blueLadder.selected?'生效':'候选'}：最近40个交易日（${blueLadder.windowStart} 至 ${blueLadder.windowEnd}，含当日）有 ${blueLadder.count} 个实心蓝点日；上限 x=${number(blueLadder.cap)} 倍，分 n=${blueLadder.steps} 次加满，目标 ${number(blueLadder.cap)} × min(1, ${blueLadder.count}/${blueLadder.steps}) = ${number(blueLadder.target)} 倍。旧蓝点移出窗口后不再计数，空心蓝点不计入。`);
     if(applicable.length>1)reasons.push(`同时生效：${applicable.map(r=>r.label+'（'+r.priority+'）').join('、')}；只采用优先级最高者，同级按设置表顺序。`);
     if(limited)reasons.push(`期望 ${number(requested)}×；按当时可交易工具与资金权重不超过100%的限制，实际目标 ${number(exposure)}×，余款持BIL。`);
     if(weight>1)reasons.push(`蓝点目标不截顶：${tool.symbol}目标资金权重 ${number(weight*100)}%，超出自有资金的 ${number((weight-1)*100)}% 记为融资负债；年利率固定5%，按实际日历天数/365计息，利息计入负债。`);
@@ -144,7 +148,7 @@
       if(m.decisionDate&&scores[challenger]>scores[m.selection]+p.buffer)selection=challenger;
       m={selection,decisionDate:date,scores,from:data.dates[t-p.lookback],through:data.dates[t-p.skip]};memory.momentum=m;
     }
-    return{...copy(m),reason:m.decisionDate?`动量选品：${m.decisionDate} 比较 ${m.from} 至 ${m.through} 的复权收益（观察${p.lookback}日，剔除最近${p.skip}日）；QQQ ${number(m.scores.QQQ*100)}%，SOXX ${number(m.scores.SOXX*100)}%，换品缓冲 ${number(p.buffer*100)} 个百分点，选中 ${m.selection}，按${{daily:'每日',weekly:'每周首个交易日',monthly:'每月首个交易日'}[p.frequency]}复查。蓝点与常态共用此底层。`:'动量观察期不足，暂用QQQ；积累完整观察期后才能比较。'};
+    return{...copy(m),reason:m.decisionDate?`动量选品：${m.decisionDate} 比较 ${m.from} 至 ${m.through} 的复权收益（观察${p.lookback}日，剔除最近${p.skip}日）；QQQ ${number(m.scores.QQQ*100)}%，SOXX ${number(m.scores.SOXX*100)}%，换品缓冲 ${number(p.buffer*100)} 个百分点，选中 ${m.selection}，按${{daily:'每日',weekly:'每周首个交易日',monthly:'每月首个交易日'}[p.frequency]}复查。需要动量的常态或蓝点分批配置使用此选品结果。`:'动量观察期不足，暂用QQQ；积累完整观察期后才能比较。'};
   }
   function stats(history,turnover){
     const years=(Date.parse(history.at(-1).date)-Date.parse(history[0].date))/86400000/365.25;
