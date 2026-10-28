@@ -20,14 +20,15 @@
   const DATE=/^\d{4}-\d{2}-\d{2}$/;
   const yellowDefaults=()=>({tdcEnabled:true,tdcThreshold:60,priceEnabled:true,repairPct:3,blueEnabled:true});
   const momentumDefaults=()=>({lookback:126,skip:21,frequency:'monthly',buffer:0});
-  function defaults(){return {schemaVersion:1,name:'我的双模型策略',start:'2016-10-21',end:'2026-10-22',asset:'QQQ',bear200Enabled:false,momentum:momentumDefaults(),baseExposure:1,allowSynthetic:false,band:.05,costMultiplier:1,financingAnnualRate:FINANCING_RATE,rules:RULES.map(r=>({id:r.id,action:r.action,value:r.value,...(r.conditional?{unlock:yellowDefaults()}:{days:r.days}),priority:r.priority,...(r.id==='ccc_top'?{stackWithCredit:true}:{}),...(r.id==='blue'?{steps:r.steps,onlyIfNotLower:true,asset:'inherit'}:{})}))};}
+  function defaults(){return {schemaVersion:1,name:'我的双模型策略',start:'2016-10-21',end:'2026-10-22',asset:'QQQ',bearGateEnabled:false,momentum:momentumDefaults(),baseExposure:1,allowSynthetic:false,band:.05,costMultiplier:1,financingAnnualRate:FINANCING_RATE,rules:RULES.map(r=>({id:r.id,action:r.action,value:r.value,...(r.conditional?{unlock:yellowDefaults()}:{days:r.days}),priority:r.priority,...(r.id==='ccc_top'?{stackWithCredit:true}:{}),...(r.id==='blue'?{steps:r.steps,onlyIfNotLower:true,asset:'inherit'}:{})}))};}
   function validate(input,data){
     if(!input||input.schemaVersion!==1)throw new Error('自定义设置版本无效。');
     const c=copy(input);
     if(typeof c.name!=='string'||!c.name.trim()||c.name.trim().length>40)throw new Error('策略名称请填写1–40个字符。');
     c.name=c.name.trim();c.financingAnnualRate=FINANCING_RATE;delete c.toolMode;
-    c.bear200Enabled=c.bear200Enabled===undefined?false:c.bear200Enabled;
-    if(typeof c.bear200Enabled!=='boolean')throw new Error('熊市200日线清仓开关无效。');
+    c.bearGateEnabled=c.bearGateEnabled===undefined?(c.bear200Enabled===undefined?false:c.bear200Enabled):c.bearGateEnabled;
+    if(typeof c.bearGateEnabled!=='boolean')throw new Error('熊市闸门开关无效。');
+    delete c.bear200Enabled;
     for(const key of ['start','end'])if(!DATE.test(c[key]||'')||!Number.isFinite(Date.parse(c[key]))||new Date(c[key]+'T00:00:00Z').toISOString().slice(0,10)!==c[key])throw new Error('请选择有效的回测起止日期。');
     if(c.start>c.end||c.start<(data?.meta.start||'2007-01-03')||c.end>(data?.meta.end||'2026-10-22'))throw new Error(`回测日期须在 ${data?.meta.start||'2007-01-03'} 至 ${data?.meta.end||'2026-10-22'} 之间，且结束日不早于开始日。`);
     if(!['QQQ','SOXX','momentum'].includes(c.asset)||typeof c.allowSynthetic!=='boolean')throw new Error('常态底层设置无效。');
@@ -96,21 +97,27 @@
     const creditStack=top?.stackWithCredit!==false&&top?.action==='scale'&&creditState?.action==='scale'?{topRule:top.id,creditRule:creditState.id,creditLabel:creditState.label,topMultiplier:top.value,creditMultiplier:creditState.value,combinedMultiplier:top.value*creditState.value,target:cfg.baseExposure*top.value*creditState.value,topSignalDate:data.dates[top.sourceIndex],days:top.days,priority:Math.max(top.priority,creditState.priority),selected:false}:null;
     const stackApplies=r=>creditStack&&(r===top||r===creditState);
     const stackLabel=creditStack?`${top.label} × ${creditState.label}`:null;
-    const ruleExposure=r=>stackApplies(r)?creditStack.target:!r?cfg.baseExposure:r.action==='flat'?0:r.action==='long'?r.value:r.action==='short'?-r.value:r.action==='blue_ladder'?blueLadder.target:cfg.baseExposure*r.value;
+    const rawRuleExposure=r=>stackApplies(r)?creditStack.target:!r?cfg.baseExposure:r.action==='flat'?0:r.action==='long'?r.value:r.action==='short'?-r.value:r.action==='blue_ladder'?blueLadder.target:cfg.baseExposure*r.value;
+    const bearGate=cfg.bearGateEnabled?bearGate200(data,t):null;
+    // Match fitted-aggressive bear_mult=0 on the ordinary long channel.
+    // Yellow's dedicated configuration, inverse positions and blue bottom-fishing
+    // are separate channels, so the gate is not a global liquidation override.
+    const gateApplies=r=>bearGate?.active&&r?.id!=='yellow'&&r?.id!=='blue'&&rawRuleExposure(r)>0;
+    const ruleExposure=r=>gateApplies(r)?0:rawRuleExposure(r);
     const ordinaryExposure=r=>Math.max(-3,Math.min(3,ruleExposure(r)));
-    const bear200=cfg.bear200Enabled?bearTrend200(data,t):null;
-    const bearRule=bear200?.below?{id:'bear200',label:'熊市200日线清仓',action:'flat',value:0,priority:100,state:true}:null;
-    const baseline=bearRule||active.find(r=>r.id!=='blue'),blue=active.find(r=>r.id==='blue'&&['blue_ladder','long','scale'].includes(r.action));
+    const baseline=active.find(r=>r.id!=='blue'),blue=active.find(r=>r.id==='blue'&&['blue_ladder','long','scale'].includes(r.action));
+    if(bearGate){bearGate.baselineBefore=Math.max(-3,Math.min(3,rawRuleExposure(baseline)));bearGate.baselineAfter=ordinaryExposure(baseline);bearGate.baselineGated=!!gateApplies(baseline);}
     let blueComparison=null;
     if(blue){
       const blueExposure=blue.action==='blue_ladder'?ruleExposure(blue):ordinaryExposure(blue),baselineExposure=ordinaryExposure(baseline);
       const eligible=blueExposure+1e-12*Math.max(1,Math.abs(blueExposure),Math.abs(baselineExposure))>=baselineExposure;
-      blueComparison={enabled:blue.onlyIfNotLower!==false,blueExposure,baselineExposure,baselineState:stackApplies(baseline)?stackLabel:baseline?.label||'常态',baselineRule:baseline?.id||null,eligible,selected:false};
+      blueComparison={enabled:blue.onlyIfNotLower!==false,blueExposure,baselineExposure,baselineState:bearGate?.baselineGated?'熊市闸门后的'+(stackApplies(baseline)?stackLabel:baseline?.label||'常态'):stackApplies(baseline)?stackLabel:baseline?.label||'常态',baselineRule:baseline?.id||null,eligible,selected:false};
     }
     const applicable=active.filter(r=>!(r===blue&&blueComparison?.enabled&&!blueComparison.eligible));
-    const winner=bearRule||applicable[0];
+    const winner=applicable[0];
+    if(bearGate)bearGate.applied=!!gateApplies(winner);
     if(creditStack)creditStack.selected=!!stackApplies(winner);
-    const state=creditStack?.selected?stackLabel:winner?.label||'常态';
+    const state=bearGate?.applied?'熊市闸门':creditStack?.selected?stackLabel:winner?.label||'常态';
     if(blueLadder){blueLadder.selected=winner===ladder;if(blueLadder.selected)selection=ladderAsset;}
     if(blueComparison)blueComparison.selected=winner===blue;
     desired=ruleExposure(winner);
@@ -129,14 +136,15 @@
     const limited=Math.abs(exposure-requested)>1e-9*Math.max(1,Math.abs(requested));
     const action=winner?`${winner.label}：${ACTIONS[winner.action]}${!['flat','ignore'].includes(winner.action)?' '+number(winner.value)+(winner.action==='scale'?'':'×'):''}`:`常态：${selection} ${number(cfg.baseExposure)}×`;
     const reasons=[winner?`${action}。${winner.id==='yellow'?'锁定至解锁条件满足，不按天数到期':winner.state?'条件保持时生效':`信号日 ${data.dates[winner.sourceIndex]}，有效 ${winner.days} 个交易日（含信号日）`}；优先级 ${winner.priority}。`:`当前无已启用的预警规则生效，按常态 ${selection} ${number(cfg.baseExposure)} 倍配置。`];
-    if(bear200){
-      const b=bear200;
-      reasons.unshift(!b.ready?`熊市200日线过滤已开启：仅有 ${b.count} 个复权收盘数据，须完整200个交易日；当前不触发，沿用原规则。`:b.below?`熊市200日线清仓生效：QQQ复权收盘价 / 200日均线 = ${number(b.priceToMA*100)}%，低于100%。最高优先级清仓全部权益及反向ETF，目标100% BIL；蓝点及其他持仓规则暂不执行。信号次一交易日收盘成交，站回均线及以上后按原规则恢复。`:`熊市200日线过滤未触发：QQQ复权收盘价 / 200日均线 = ${number(b.priceToMA*100)}%，位于均线及以上，按其他有效规则或常态配置。`);
+    if(bearGate){
+      const b=bearGate;
+      const status=!b.ready?`可用 ${b.count} 个复权收盘数据，须完整221个交易日以比较当前200日均线与21个交易日前均线；当前不触发。`:`QQQ收盘 / 200日均线 = ${number(b.priceToMA*100)}%；当前均线 / 21个交易日前均线 = ${number(b.maToPastMA*100)}%。${b.active?'两项均低于100%，闸门条件命中。':'未同时低于100%，闸门未触发。'}`;
+      reasons.unshift(`熊市闸门（同拟合·进取）：${status}${b.active?` 常态多头乘数为0；比较基准 ${number(b.baselineBefore)}× → ${number(b.baselineAfter)}×。${b.applied?'本次常态多头归零，余款持有BIL。':'本次采用独立配置或原目标已非多头。'}`:''} 黄点锁仓配置与空头配置保留；蓝点抄底仍按敞口比较及自定义优先级执行。次一交易日收盘成交；任一熊市条件不再满足即解除，其他规则状态继续更新。`);
     }
     if(creditStack){
       const c=creditStack;
       const explanation=`CCC见顶累乘${c.selected?'生效':'候选（本次未采用）'}：常态敞口 ${number(cfg.baseExposure)} × 见顶乘数 ${number(c.topMultiplier)} × ${c.creditLabel}乘数 ${number(c.creditMultiplier)} = ${number(c.target)}× 底层敞口。见顶信号日 ${c.topSignalDate}，有效 ${c.days} 个交易日（含信号日）；信用状态按当日条件。信用压力与高于200日线同时生效时只选优先级最高的一条，同级按表格顺序；组合以两条规则中较高的优先级 ${c.priority} 与其他规则比较。`;
-      if(c.selected)reasons[bear200?1:0]=explanation;else reasons.push(explanation);
+      if(c.selected)reasons[bearGate?1:0]=explanation;else reasons.push(explanation);
     }
     if(momentum)reasons.push(momentum.reason);
     if(blueComparison){
@@ -153,27 +161,29 @@
       }else reasons.push(`黄点已于 ${yellowLock.releaseDate} 信号日解除：${yellowLock.releaseReason}。解除后执行其他有效规则或常态；未出现新黄点前不重新锁定。`);
     }
     if(blueLadder)reasons.push(`${blueLadder.asset} 蓝点分批${blueLadder.selected?'生效':'候选'}：最近40个交易日（${blueLadder.windowStart} 至 ${blueLadder.windowEnd}，含当日）有 ${blueLadder.count} 个实心蓝点日；上限 x=${number(blueLadder.cap)} 倍，分 n=${blueLadder.steps} 次加满，目标 ${number(blueLadder.cap)} × min(1, ${blueLadder.count}/${blueLadder.steps}) = ${number(blueLadder.target)} 倍。旧蓝点移出窗口后不再计数，空心蓝点不计入。`);
-    if(applicable.length>1)reasons.push(`同时生效：${applicable.map(r=>r.label+'（'+r.priority+'）').join('、')}；${bearRule?'熊市200日线清仓优先，以上持仓规则暂不执行':creditStack?.selected?'本次采用CCC见顶与所选信用状态的累乘组合，其余规则不累乘':'采用优先级最高者，同级按设置表顺序'}。`);
+    if(applicable.length>1)reasons.push(`同时生效：${applicable.map(r=>r.label+'（'+r.priority+'）').join('、')}；${creditStack?.selected?'本次采用CCC见顶与所选信用状态的累乘组合，其余规则不累乘':'采用优先级最高者，同级按设置表顺序'}。`);
     if(limited)reasons.push(`期望 ${number(requested)}×；按当时可交易工具与资金权重不超过100%的限制，实际目标 ${number(exposure)}×，余款持BIL。`);
     if(weight>1)reasons.push(`蓝点目标不截顶：${tool.symbol}目标资金权重 ${number(weight*100)}%，超出自有资金的 ${number((weight-1)*100)}% 记为融资负债；年利率固定5%，按实际日历天数/365计息，利息计入负债。`);
     if(tool?.synthetic)reasons.push(`${tool.symbol} 为研究合成序列，不是当时已上市ETF。`);
-    return{weights,exposure,desired:requested,selection,momentum,blueLadder,blueComparison,creditStack,bear200,yellowLock,winner:winner?.id||null,state,reasons,limited,synthetic:!!tool?.synthetic};
+    return{weights,exposure,desired:requested,selection,momentum,blueLadder,blueComparison,creditStack,bearGate,yellowLock,winner:winner?.id||null,state,reasons,limited,synthetic:!!tool?.synthetic};
   }
-  // Ratios reconstructed from frozen adjusted returns are invariant to the price
-  // scale. Use exactly 200 closes including the signal date; never read later rows.
-  function bearTrend200(data,t){
-    const period=200,j=data.symbols.findIndex(s=>s.symbol==='QQQ');
-    if(j<0)throw new Error('熊市200日线缺少QQQ复权行情。');
-    if(t<period-1)return{asset:'QQQ',period,date:data.dates[t],ready:false,count:t+1,priceToMA:null,below:false};
-    let price=1,total=1;
-    for(let i=t-period+2;i<=t;i++){
+  // Match QQQ < MA200 && MA200 < MA200.shift(21). A common price
+  // scale cancels in both comparisons; the two 200-close windows need 221 closes.
+  function bearGate200(data,t){
+    const period=200,slopeLookback=21,required=period+slopeLookback,j=data.symbols.findIndex(s=>s.symbol==='QQQ');
+    if(j<0)throw new Error('熊市闸门缺少QQQ复权行情。');
+    if(t<required-1)return{asset:'QQQ',period,slopeLookback,date:data.dates[t],ready:false,count:t+1,priceToMA:null,maToPastMA:null,below:false,maFalling:false,active:false,multiplier:0};
+    const closes=[1];let price=1;
+    for(let i=t-required+2;i<=t;i++){
       const r=data.returns[i]?.[j];
-      if(typeof r!=='number'||!Number.isFinite(r)||r<=-1)throw new Error('熊市200日线缺少有效QQQ复权收益 '+data.dates[i]);
-      price*=1+r;total+=price;
+      if(typeof r!=='number'||!Number.isFinite(r)||r<=-1)throw new Error('熊市闸门缺少有效QQQ复权收益 '+data.dates[i]);
+      price*=1+r;closes.push(price);
     }
-    const priceToMA=price/(total/period);
-    if(!Number.isFinite(priceToMA)||priceToMA<=0)throw new Error('熊市200日线计算失败 '+data.dates[t]);
-    return{asset:'QQQ',period,date:data.dates[t],ready:true,count:period,priceToMA,below:priceToMA<1-1e-12};
+    const ma=sum(closes.slice(slopeLookback))/period,pastMA=sum(closes.slice(0,period))/period;
+    const priceToMA=price/ma,maToPastMA=ma/pastMA;
+    if(!Number.isFinite(priceToMA)||priceToMA<=0||!Number.isFinite(maToPastMA)||maToPastMA<=0)throw new Error('熊市闸门计算失败 '+data.dates[t]);
+    const below=priceToMA<1-1e-12,maFalling=maToPastMA<1-1e-12;
+    return{asset:'QQQ',period,slopeLookback,date:data.dates[t],ready:true,count:required,priceToMA,maToPastMA,below,maFalling,active:below&&maFalling,multiplier:0};
   }
   function momentumChoice(data,params,t,memory){
     const p={...momentumDefaults(),...params},date=data.dates[t],previous=data.dates[t-1];
@@ -206,7 +216,7 @@
     const last=RULES.map(()=>-1e9),targets=[];
     for(let t=0;t<=end;t++)targets.push(resolveTarget(data,cfg,t,last));
     const bil=data.symbols.findIndex(s=>s.symbol==='BIL'),qi=data.symbols.findIndex(s=>s.symbol==='QQQ'),turnover=[],history=[],benchmark=[],points={},trades=[];
-    let h=targets[start-1].weights.slice(),benchmarkNav=1,limitedDays=0,syntheticDays=0,costPaid=0,rebalanceDays=0,financingDays=0,financingInterestPaid=0,bear200Days=0;
+    let h=targets[start-1].weights.slice(),benchmarkNav=1,limitedDays=0,syntheticDays=0,costPaid=0,rebalanceDays=0,financingDays=0,financingInterestPaid=0,bearGateDays=0,bearGateAppliedDays=0;
     for(let t=start;t<=end;t++){
       const target=targets[t-1],date=data.dates[t];let rebalanced=false,turn=0,financingInterest=0;
       if(t>start){
@@ -234,17 +244,18 @@
       }
       if(weights[bil]<-1e-9)financingDays++;
       if(financingInterest>0||weights[bil]<-1e-9)reasons.push(`本期融资利息 ${number(financingInterest)}（初始资金=1），期末融资负债占净资产 ${number(Math.max(0,-weights[bil])*100)}%；融资年利率固定5%。负现金代表借款，不是负BIL持仓。`);
-      if(target.bear200?.below)bear200Days++;
+      if(target.bearGate?.active)bearGateDays++;
+      if(target.bearGate?.applied)bearGateAppliedDays++;
       if(target.limited)limitedDays++;
       if(weights.some((w,j)=>w>1e-9&&data.symbols[j].synthetic))syntheticDays++;
       if(t===start)reasons.push('窗口首日收盘继承前一交易日目标，净值从1起算；首日不虚构成交，下一交易日起计收益和成本。');
       if(rebalanced&&rebalanceOnly)reasons.push(`目标不变，实际资金权重偏离超过 ${number(cfg.band*100)} 个百分点，按自定义再平衡带调仓。`);
-      points[date]={signalDate:data.dates[t-1],state:target.state,selection:target.selection,holdings:weights.flatMap((w,j)=>j!==bil&&w>1e-9?[[data.symbols[j].symbol,w]]:[]),cash:weights[bil],exposure,targetHoldings:target.weights.flatMap((w,j)=>j!==bil&&w>1e-9?[[data.symbols[j].symbol,w]]:[]),targetCash:target.weights[bil],targetExposure:target.exposure,rebalanced,reasons,nav,benchmarkNav,band:cfg.band,rebalanceOnly,blueLadder:target.blueLadder,blueComparison:target.blueComparison,creditStack:target.creditStack,bear200:target.bear200,yellowLock:target.yellowLock,financingInterest,financingAnnualRate:FINANCING_RATE};
+      points[date]={signalDate:data.dates[t-1],state:target.state,selection:target.selection,holdings:weights.flatMap((w,j)=>j!==bil&&w>1e-9?[[data.symbols[j].symbol,w]]:[]),cash:weights[bil],exposure,targetHoldings:target.weights.flatMap((w,j)=>j!==bil&&w>1e-9?[[data.symbols[j].symbol,w]]:[]),targetCash:target.weights[bil],targetExposure:target.exposure,rebalanced,reasons,nav,benchmarkNav,band:cfg.band,rebalanceOnly,blueLadder:target.blueLadder,blueComparison:target.blueComparison,creditStack:target.creditStack,bearGate:target.bearGate,yellowLock:target.yellowLock,financingInterest,financingAnnualRate:FINANCING_RATE};
       history.push({date,nav});benchmark.push({date,nav:benchmarkNav});turnover.push(turn);
     }
     const metrics=stats(history,turnover),benchmarkMetrics=stats(benchmark,turnover.map(()=>0));
-    return{config:cfg,range:{start:data.dates[start],end:data.dates[end]},history,benchmark,metrics,benchmarkMetrics,details:{points,trades},audit:{inputHash:data.meta.inputHash,days:history.length,bear200Days,limitedDays,syntheticDays,rebalanceDays,costPaid,financingDays,financingInterestPaid,financingAnnualRate:FINANCING_RATE},sourceMeta:copy(data.meta)};
+    return{config:cfg,range:{start:data.dates[start],end:data.dates[end]},history,benchmark,metrics,benchmarkMetrics,details:{points,trades},audit:{inputHash:data.meta.inputHash,days:history.length,bearGateDays,bearGateAppliedDays,limitedDays,syntheticDays,rebalanceDays,costPaid,financingDays,financingInterestPaid,financingAnnualRate:FINANCING_RATE},sourceMeta:copy(data.meta)};
   }
   function readings(data){return Object.fromEntries(data.dates.map((d,i)=>{const v=data.readings[i],mask=data.signals[i];return[d,{temperature:v[0],tdc:v[1],creditSpread:v[2],creditMA200:v[3],creditPercentile:v[4],creditSourceDate:v[5],creditStress:!!(mask&(1<<7)),creditAbove:!!(mask&(1<<8))}];}));}
-  root.CustomBacktest=Object.freeze({RULES,ACTIONS,defaults,validate,resolveTarget,bearTrend200,momentumChoice,stats,run,readings});
+  root.CustomBacktest=Object.freeze({RULES,ACTIONS,defaults,validate,resolveTarget,bearGate200,momentumChoice,stats,run,readings});
 })(typeof window!=='undefined'?window:globalThis);
