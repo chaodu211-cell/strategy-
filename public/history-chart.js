@@ -44,7 +44,46 @@
     const turnover=[...days.values()].reduce((s,d)=>s+(d.equity+d.cash)/2,0);
     return{cagr:(last.nav/first.nav)**(1/years)-1,mdd:dd.value,sharpe:vol>0?mean*252/vol:null,vol,turn_yr:turnover/years,drawdown:dd,rebalanceDays:days.size};
   }
-  function tooltipHTML(point, benchmarkValue, detail, drawdown, loadState,annotationHTML='') {
+  function customReasons(detail, config) {
+    const n=value=>Number.isFinite(value)?String(Number(value.toFixed(2))):'—';
+    const x=value=>`${n(value)}倍`,p=value=>`${n(value*100)}%`;
+    const labels={red:'实心红点',red_ad:'空心红点',blue:'实心蓝点',blue_soft:'空心蓝点',yellow:'黄点预警',ccc_top:'CCC 见顶预警',ccc_bot:'CCC 见底预警',ccc_stress:'信用压力（分位≥95）',ccc_above:'利差高于200日线'};
+    const base=String(detail.state||'常态').split(' · ')[0],rules=config.rules||[];
+    const rule=rules.find(r=>labels[r.id]===base),ladder=detail.blueLadder,credit=detail.creditStack;
+    const reasons=[],source=detail.reasons||[];
+    if(detail.bearGate?.applied)reasons.push('熊市闸门：QQQ低于200日线且均线下行，常态多头归零。');
+    else if(ladder?.selected)reasons.push(`蓝点分批：${ladder.asset}，已建 ${Math.min(ladder.count,ladder.steps)}/${ladder.steps} 份，原目标 ${x(ladder.target)}。`);
+    else if(credit?.selected)reasons.push(`CCC见顶 × ${credit.creditLabel}：常态敞口 × ${n(credit.combinedMultiplier)}。`);
+    else if(rule){
+      const action={flat:'清仓至BIL',long:`原多头目标 ${x(rule.value)}`,short:`做空目标 ${x(rule.value)}`,scale:`常态敞口 × ${n(rule.value)}`,blue_ladder:'分批建仓'}[rule.action]||'按当前配置';
+      const original=source.find(r=>r.startsWith(base+'：'))||'',window=original.match(/信号日 (\d{4}-\d{2}-\d{2})，有效 (\d+) 个交易日/);
+      reasons.push(`${base}：${action}${window?`（${window[1]}起，${window[2]}日窗口）`:''}。`);
+    }else reasons.push(base==='常态'?`常态配置：${detail.selection}，目标 ${x(detail.targetExposure)}。`:`生效规则：${base}。`);
+    const blueMode=rules.find(r=>r.id==='blue')?.asset??'inherit';
+    const usesMomentum=ladder?.selected?(blueMode==='momentum'||(blueMode==='inherit'&&config.asset==='momentum')):config.asset==='momentum';
+    if(usesMomentum&&detail.targetExposure>0)reasons[0]+=` 动量选中${detail.selection}。`;
+    const yellow=detail.yellowLock;
+    if(rule?.id==='yellow'&&yellow?.locked){
+      const u=yellow.unlock||{},checks=[];
+      if(u.tdcEnabled)checks.push(`TDC<${n(u.tdcThreshold)}`);
+      if(u.priceEnabled)checks.push(`QQQ距52周高点≤${n(u.repairPct)}%`);
+      if(u.blueEnabled)checks.push('实心蓝点');
+      if(checks.length)reasons.push(`黄点锁定中，待${checks.join(' / ')}任一满足后解除。`);
+    }else if(yellow?.releaseDate===detail.signalDate&&yellow.releaseReason){
+      const why=yellow.releaseReason.replace('出现实心蓝点，永久解除本次黄点锁定','实心蓝点解锁').replaceAll('QQQ距52周高点','QQQ距高点');
+      reasons.push(`黄点已解除：${why}。`);
+    }
+    const compare=detail.blueComparison;
+    if(compare?.enabled&&!compare.eligible)reasons.push(`蓝点未执行：抄底 ${x(compare.blueExposure)} < 当日配置 ${x(compare.baselineExposure)}。`);
+    const gate=detail.drawdownGate;
+    if(gate?.applied)reasons.push(`回撤闸：参考回撤 ${p(gate.drawdown)}，常态目标 ${x(gate.baselineBefore)} → ${x(gate.baselineAfter)}。`);
+    const cap=detail.cccStressBlueLimit;
+    if(cap?.applied)reasons.push(`CCC波动限仓：${cap.monitorAsset}的${cap.window}日年化波动率 ${p(cap.volatility)}，目标 ${x(cap.originalExposure)} → ${x(cap.exposure)}。`);
+    const tool=source.map(r=>r.match(/^期望 (.+?)；.*?(?:限仓前可实现目标|实际目标) (.+?)，/)).find(Boolean);
+    if(tool)reasons.push(`工具限制：期望 ${tool[1]}，可实现 ${tool[2]}。`);
+    return reasons;
+  }
+  function tooltipHTML(point, benchmarkValue, detail, drawdown, loadState,annotationHTML='',customConfig=null) {
     const landmark = point.date === drawdown?.troughDate ? '最大回撤谷底' : point.date === drawdown?.peakDate ? '最大回撤起点' : '';
     let html = `<div class="hover-heading"><strong>${escape(point.date)}</strong>${landmark ? `<em>${landmark}</em>` : ''}</div><div class="hover-nav"><span>策略净值 <b>${multiple(point.value)}</b></span><span>QQQ <b>${multiple(benchmarkValue)}</b></span></div>`;
     html += annotationHTML;
@@ -55,10 +94,11 @@
     }
     html += `</div><div class="hover-exposure">底层敞口 <strong>${multiple(detail.exposure)}</strong></div>`;
     const target = [...detail.targetHoldings, [detail.targetCash<0?'融资负债':'BIL',detail.targetCash]].map(([s,w]) => `${symbolName(s)} ${percent(w)}`).join(' / ');
-    html += `<div class="hover-target">规则目标：${escape(target)}</div><div class="hover-basis-title">信号依据 · ${escape(detail.signalDate)}</div><ul class="hover-reasons">${detail.reasons.map(reason => `<li>${escape(reason)}</li>`).join('')}</ul>`;
+    const reasons=customConfig?customReasons(detail,customConfig):detail.reasons;
+    html += `<div class="hover-target">规则目标：${escape(target)}</div><div class="hover-basis-title">信号依据 · ${escape(detail.signalDate)}</div><ul class="hover-reasons">${reasons.map(reason => `<li>${escape(reason)}</li>`).join('')}</ul>`;
     const band=Number.isFinite(detail.band)?Number((detail.band*100).toFixed(4)):5;
     html += `<p class="hover-note">${detail.rebalanced ? '当日收盘已按前一交易日信号再平衡。' : `未触发${band}个百分点再平衡带，权重可能随价格浮动。`}<br>回测模拟持仓，非账户实盘持仓。</p>`;
     return html;
   }
-  root.HistoryChart = Object.freeze({nearestIndex, mergeLandmarks, tooltipHTML,rangeIndices,summarize});
+  root.HistoryChart = Object.freeze({nearestIndex, mergeLandmarks, tooltipHTML,rangeIndices,summarize,customReasons});
 })(window);

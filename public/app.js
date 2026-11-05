@@ -229,7 +229,7 @@ function renderCustomHistory() {
   const collection=ModelAnnotations.collect(annotations,detail,range,annotationFilters);renderAnnotationControls(collection);
   $('#annotation-status').textContent=`自定义回测选区：${collection.trades.length} 个ETF仓位调整、${collection.events.length} 个模型标记。成交沿用本次生成的完整回测。`;
   $('#drawdown-summary').textContent=rangeDrawdownSummary(drawdown);
-  drawChart(strategy,benchmark,detail,drawdown,collection,annotations);
+  drawChart(strategy,benchmark,detail,drawdown,collection,annotations,result.config);
 }
 
 function annotationMarkup(collection,normalized,plot) {
@@ -273,7 +273,7 @@ function annotationMarkup(collection,normalized,plot) {
   return{background,tracks,trades,targets};
 }
 
-function drawChart(series,benchmark,details,drawdown,collection,annotations) {
+function drawChart(series,benchmark,details,drawdown,collection,annotations,customConfig=null) {
   $('#chart-tooltip').hidden=true;
   $('#chart-tooltip').classList.remove('pinned');
   const svg=$('#nav-chart');
@@ -322,7 +322,7 @@ function drawChart(series,benchmark,details,drawdown,collection,annotations) {
     $('#hover-line').setAttribute('x1',x(p.date));$('#hover-line').setAttribute('x2',x(p.date));$('#hover-line').setAttribute('visibility','visible');
     $('#hover-dot').setAttribute('cx',x(p.date));$('#hover-dot').setAttribute('cy',y(p.value));$('#hover-dot').setAttribute('visibility','visible');
     if(index!==activeIndex||tooltip.hidden){
-      tooltip.innerHTML='<div class="tooltip-pin-bar"><span>点击图中点位固定详情，可滚动阅读</span><button type="button" data-close-chart-detail aria-label="关闭历史详情">×</button></div>'+HistoryChart.tooltipHTML(p,b.value,details?.points[p.date],drawdown,historyLoadState,ModelAnnotations.tooltipHTML(p.date,collection,annotations?.readings?.[p.date]));
+      tooltip.innerHTML='<div class="tooltip-pin-bar"><span>点击图中点位固定详情，可滚动阅读</span><button type="button" data-close-chart-detail aria-label="关闭历史详情">×</button></div>'+HistoryChart.tooltipHTML(p,b.value,details?.points[p.date],drawdown,historyLoadState,ModelAnnotations.tooltipHTML(p.date,collection,annotations?.readings?.[p.date]),customConfig);
       tooltip.scrollTop=0;
     }
     activeIndex=index;tooltip.hidden=false;

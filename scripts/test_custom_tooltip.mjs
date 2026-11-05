@@ -1,0 +1,22 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import vm from 'node:vm';
+import '../public/custom-backtest.js';
+const context={window:{}};vm.runInNewContext(fs.readFileSync(new URL('../public/history-chart.js',import.meta.url),'utf8'),context);const H=context.window.HistoryChart,C=globalThis.CustomBacktest;
+const config=C.defaults(),fullRule='完整规则说明：未触发条件、全部阈值、次日成交、长期数据口径。'.repeat(12);
+const point={date:'2026-06-12',signalDate:'2026-06-11',state:'空心红点',selection:'QQQ',holdings:[],cash:1,exposure:0,targetHoldings:[],targetCash:1,targetExposure:0,rebalanced:false,band:.05,reasons:['空心红点：清仓至 BIL。信号日 2026-06-08，有效 30 个交易日（含信号日）；优先级 75。',fullRule],bearGate:{active:false,applied:false},drawdownGate:{active:false,applied:false},cccStressBlueLimit:{active:false,applied:false}};
+const saved=JSON.stringify(point),html=H.tooltipHTML({date:point.date,value:1},1,point,null,'ready','',config);
+assert.ok(html.includes('空心红点：清仓至BIL（2026-06-08起，30日窗口）'));assert.ok(!html.includes(fullRule));assert.ok(!html.includes('优先级 75'));assert.ok(!html.includes('回撤闸：'));assert.ok(!html.includes('CCC波动限仓：'));
+assert.ok(H.tooltipHTML({date:point.date,value:1},1,point,null,'ready').includes(fullRule),'Original strategy tooltips keep their existing complete evidence');assert.equal(JSON.stringify(point),saved,'Presentation must preserve export evidence');
+const blue=structuredClone(point);Object.assign(blue,{state:'实心蓝点 · CCC压力位蓝点限制',targetExposure:.625,blueLadder:{selected:true,asset:'SOXX',count:7,steps:10,target:2.8},drawdownGate:{active:true,applied:false},cccStressBlueLimit:{active:true,applied:true,monitorAsset:'QQQ',window:10,volatility:.8,originalExposure:2.8,exposure:.625}});
+const blueReasons=H.customReasons(blue,config).join(' ');assert.ok(blueReasons.includes('SOXX，已建 7/10 份'));assert.ok(blueReasons.includes('QQQ的10日年化波动率 80%'));assert.ok(blueReasons.includes('2.8倍 → 0.63倍'));assert.ok(!blueReasons.includes('回撤闸：'),'An active gate overridden by blue must not be presented as a reduction');
+const gated=structuredClone(point);Object.assign(gated,{state:'常态 · 回撤闸',targetExposure:1.5,drawdownGate:{active:true,applied:true,drawdown:-.23,baselineBefore:3,baselineAfter:1.5}});assert.ok(H.customReasons(gated,config).join(' ').includes('参考回撤 -23%，常态目标 3倍 → 1.5倍'));
+const rejected=structuredClone(point);rejected.blueComparison={enabled:true,eligible:false,blueExposure:.4,baselineExposure:1};assert.ok(H.customReasons(rejected,config).join(' ').includes('蓝点未执行：抄底 0.4倍 < 当日配置 1倍'));
+const yellow=structuredClone(point);yellow.state='黄点预警';yellow.yellowLock={locked:true,unlock:{tdcEnabled:true,tdcThreshold:60,priceEnabled:false,repairPct:3,blueEnabled:true}};const yr=H.customReasons(yellow,config).join(' ');assert.ok(yr.includes('TDC<60 / 实心蓝点'));assert.ok(!yr.includes('52周'));
+const malicious=structuredClone(point);malicious.state='<img src=x onerror=alert(1)>';const safe=H.tooltipHTML({date:point.date,value:1},1,malicious,null,'ready','',config);assert.ok(!safe.includes('<img'));assert.ok(safe.includes('&lt;img'));
+const real=JSON.parse(fs.readFileSync(new URL('../public/custom-inputs.json',import.meta.url))),registered=JSON.parse(fs.readFileSync(new URL('../tracking/config.json',import.meta.url))).custom;
+const result=C.run(real,{...registered,cccStressBlueLimitEnabled:true,drawdownGateEnabled:true}),before=JSON.stringify(result);let concise=0,full=0,riskDays=0;
+for(const d of Object.values(result.details.points)){const reasons=H.customReasons(d,result.config);assert.ok(reasons.length>0);full+=d.reasons.join('').length;concise+=reasons.join('').length;if(d.cccStressBlueLimit?.applied||d.drawdownGate?.applied){riskDays++;assert.ok(reasons.some(r=>r.startsWith('CCC波动限仓：')||r.startsWith('回撤闸：')));}}
+assert.equal(JSON.stringify(result),before);assert.ok(concise<full*.4);assert.ok(riskDays>0);
+const app=fs.readFileSync(new URL('../public/app.js',import.meta.url),'utf8');assert.ok(app.includes('drawChart(strategy,benchmark,detail,drawdown,collection,annotations,result.config)'));assert.ok(app.includes('annotations?.readings?.[p.date]),customConfig)'));
+console.log(JSON.stringify({conciseCustomEvidence:true,onlyRelevantLimits:true,ordinaryAndBlueAssetsCorrect:true,datesAndNumbersPreserved:true,originalTooltipsPreserved:true,exportsUnchanged:true,escapedHTML:true,customChartWired:true,textReduction:1-concise/full}));

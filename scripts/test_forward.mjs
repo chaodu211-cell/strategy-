@@ -10,6 +10,7 @@ import './test_drawdown_gate.mjs';
 import './test_ccc_stress_blue_limit.mjs';
 import './test_blue_unlock.mjs';
 import './test_chart_range.mjs';
+import './test_custom_tooltip.mjs';
 import './test_custom_registration.mjs';
 import './test_public_assets.mjs';
 import './test_strategy_details.mjs';
