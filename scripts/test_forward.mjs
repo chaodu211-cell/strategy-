@@ -6,6 +6,7 @@ import './test_blue_comparison.mjs';
 import './test_blue_asset.mjs';
 import './test_credit_stack.mjs';
 import './test_bear200.mjs';
+import './test_ccc_stress_blue_limit.mjs';
 import './test_blue_unlock.mjs';
 import './test_chart_range.mjs';
 import './test_custom_registration.mjs';

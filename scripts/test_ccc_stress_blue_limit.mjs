@@ -1,0 +1,48 @@
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import '../public/custom-backtest.js';
+const C=globalThis.CustomBacktest,clone=structuredClone;
+const dates=Array.from({length:100},(_,i)=>new Date(Date.UTC(2007,0,3+i)).toISOString().slice(0,10));
+const data={schemaVersion:1,meta:{start:dates[0],end:dates.at(-1)},signalTypes:C.RULES.map(r=>r.id),dates,symbols:[{symbol:'QQQ',underlying:'QQQ',leverage:1},{symbol:'TQQQ',underlying:'QQQ',leverage:3},{symbol:'SOXX',underlying:'SOXX',leverage:1},{symbol:'SOXL',underlying:'SOXX',leverage:3},{symbol:'PSQ',underlying:'QQQ',leverage:-1},{symbol:'BIL',underlying:'BIL',leverage:0}],returns:dates.map((_,i)=>{const q=(i%2?1:-1)*.005-.001,s=(i%2?1:-1)*.04-.005;return[q,3*q,s,3*s,-q,0];}),costs:dates.map(()=>[0,0,0,0,0,0]),tradable:dates.map(()=>63),signals:dates.map((_,i)=>i>=30&&i<=40?(1<<7)|(1<<8):0)};
+function config(){const c=C.defaults();c.start=dates[20];c.end=dates.at(-1);c.asset='SOXX';c.baseExposure=3;c.costMultiplier=0;c.band=0;c.cccStressBlueLimitEnabled=true;for(const r of c.rules)r.action='ignore';c.rules[2].asset='QQQ';c.momentum={lookback:22,skip:0,frequency:'daily',buffer:0};return c;}
+function target(d,c,t){const last=C.RULES.map(()=>-1e9);let p;for(let i=0;i<=t;i++)p=C.resolveTarget(d,C.validate(c,d),i,last);return p;}
+const near=(a,b,msg)=>assert.ok(Math.abs(a-b)<1e-11,msg??`${a} != ${b}`);
+const sigma=(d,t,j)=>{const a=d.returns.slice(t-9,t+1).map(r=>r[j]),m=a.reduce((s,v)=>s+v,0)/10;return Math.sqrt(a.reduce((s,v)=>s+(v-m)**2,0)/9)*Math.sqrt(252);};
+assert.equal(C.defaults().cccStressBlueLimitEnabled,false);
+const legacy=config();delete legacy.cccStressBlueLimitEnabled;const off=config();off.cccStressBlueLimitEnabled=false;
+assert.equal(C.validate(legacy).cccStressBlueLimitEnabled,false);assert.deepEqual(C.run(data,legacy).history,C.run(data,off).history);
+assert.throws(()=>C.validate({...config(),cccStressBlueLimitEnabled:'true'}),/开关无效/);
+const t=target(data,config(),30),cap=.5/sigma(data,30,2);
+assert.equal(t.selection,'SOXX');assert.equal(t.cccStressBlueLimit.monitorAsset,'SOXX','Monitor ordinary SOXX even though blue is configured as QQQ');assert.equal(t.cccStressBlueLimit.monitorBasis,'default');
+near(t.cccStressBlueLimit.volatility,sigma(data,30,2));near(t.exposure,cap);near(t.weights[3],cap/3);near(t.weights[5],1-cap/3);near(t.weights.reduce((a,b)=>a+b,0),1);
+assert.ok(t.cccStressBlueLimit.applied);assert.ok(t.reasons.some(r=>r.includes('当日默认标的（常态底层）SOXX')&&r.includes('10日')));
+const q=config();q.asset='QQQ';q.rules[2].asset='SOXX';near(target(data,q,30).exposure,3,'Ordinary QQQ monitors QQQ rather than blue SOXX or TQQQ');assert.equal(target(data,q,30).cccStressBlueLimit.monitorAsset,'QQQ');
+const inherit=config();inherit.rules[2].asset='inherit';near(target(data,inherit,30).exposure,cap);
+const maOnly=clone(data);maOnly.signals[30]=1<<8;near(target(maOnly,config(),30).exposure,3,'Above MA200 alone must not activate the feature');
+const blue=config(),blueData=clone(data);Object.assign(blue.rules[2],{action:'blue_ladder',value:6,steps:1,priority:99,onlyIfNotLower:false});blueData.signals[30]|=1<<2;
+const bt=target(blueData,blue,30);assert.equal(bt.winner,'blue');assert.equal(bt.selection,'QQQ');assert.equal(bt.cccStressBlueLimit.monitorAsset,'SOXX','Blue override must not replace the ordinary monitor');near(bt.cccStressBlueLimit.originalExposure,6);near(bt.exposure,cap);near(bt.weights[1],cap/3);assert.ok(bt.weights[5]>0,'Cap recomputes financing accurately');
+const qBlue=clone(blue);qBlue.asset='QQQ';qBlue.rules[2].asset='SOXX';const qb=target(blueData,qBlue,30);assert.equal(qb.selection,'SOXX');assert.equal(qb.cccStressBlueLimit.monitorAsset,'QQQ');near(qb.cccStressBlueLimit.volatility,sigma(data,30,0));near(qb.exposure,3,'QQQ ordinary + SOXX blue uses QQQ volatility and the absolute 3x ceiling');
+const sameBlue=clone(blue);sameBlue.rules[2].asset='SOXX';near(target(blueData,sameBlue,30).cccStressBlueLimit.cap,bt.cccStressBlueLimit.cap,'Changing only blue asset cannot change the volatility ceiling');
+const flatVol=clone(blueData);flatVol.returns=flatVol.returns.map(()=>[0,0,0,0,0,0]);near(target(flatVol,blue,30).exposure,3,'Zero volatility still respects 3x');
+const small=config();small.baseExposure=.2;near(target(data,small,30).exposure,.2,'Never raise a smaller original target');
+const zero=config();zero.baseExposure=0;near(target(data,zero,30).exposure,0);
+const short=config(),shortData=clone(data);Object.assign(short.rules[0],{action:'short',value:1,days:30,priority:99});shortData.signals[30]|=1;near(target(shortData,short,30).exposure,-1,'Short exposure stays unchanged');
+const older=clone(data);older.returns[20][2]=10;near(target(older,config(),30).exposure,cap,'Only the most recent 10 returns count');
+const changedToday=clone(data);changedToday.returns[30][2]=.1;assert.notEqual(target(changedToday,config(),30).exposure,cap,'Signal-day return belongs to the window');
+const run=C.run(data,config()),point=i=>run.details.points[dates[i]];
+near(point(30).targetExposure,3,'Stress signal cannot trade at the same close');near(point(31).targetExposure,cap);near(point(42).targetExposure,3,'Pressure release restores target without NAV recovery');
+assert.ok(point(42).nav<1,'Recovery also works below initial account NAV');assert.equal(run.audit.cccStressBlueLimitDays,11);
+assert.equal(point(31).cccStressBlueLimit.window,10);assert.equal(point(31).cccStressBlueLimit.monitorAsset,'SOXX');
+const future=clone(data);future.returns[60]=[1,3,-.5,-.9,-1,0];future.signals[60]=511;
+assert.deepEqual(C.run(future,config()).history.slice(0,40),run.history.slice(0,40),'Future inputs cannot change earlier results');
+const missing=clone(data);missing.returns[25][2]=null;assert.throws(()=>C.run(missing,config()),/完整10个有效日收益/);
+const momentum=clone(blue),momentumData=clone(blueData);momentum.asset='momentum';momentum.rules[2].asset='SOXX';
+momentumData.returns=dates.map((_,i)=>{const q=i<50?.001:-.002,s=(i<50?.01:-.02)+(i%2?.004:-.004);return[q,3*q,s,3*s,-q,0];});momentumData.signals[70]|=1<<2;momentumData.signals[80]|=1<<7;
+assert.equal(target(momentumData,momentum,30).cccStressBlueLimit.monitorAsset,'SOXX');
+const switched=target(momentumData,momentum,80);assert.equal(switched.selection,'SOXX');assert.equal(switched.winner,'blue');assert.equal(switched.cccStressBlueLimit.monitorAsset,'QQQ','Monitoring follows ordinary momentum even while blue continues to hold SOXX');
+const ignoredMomentum=config();ignoredMomentum.asset='QQQ';ignoredMomentum.rules[2].asset='momentum';assert.equal(target(momentumData,ignoredMomentum,30).cccStressBlueLimit.monitorAsset,'QQQ','Ignored blue-only momentum cannot change the monitor');
+const real=JSON.parse(readFileSync(new URL('../public/custom-inputs.json',import.meta.url))),registered=JSON.parse(readFileSync(new URL('../tracking/config.json',import.meta.url))).custom;
+const realLegacy=C.run(real,registered),realOff=C.run(real,{...registered,cccStressBlueLimitEnabled:false});assert.deepEqual(realLegacy.history,realOff.history);
+const realOn=C.run(real,{...registered,cccStressBlueLimitEnabled:true});assert.ok(realOn.audit.cccStressBlueLimitDays>0);
+for(const p of Object.values(realOn.details.points)){const c=p.cccStressBlueLimit;assert.equal(c.monitorAsset,'QQQ','Registered ordinary QQQ stays the monitor with independent blue SOXX');if(c.active&&c.originalExposure>0)assert.ok(p.targetExposure<=Math.min(c.originalExposure,3,.5/c.volatility)+1e-10);}
+console.log(JSON.stringify({tenDaySampleVolatility:true,ordinaryAssetMonitoring:true,blueAssetIndependent:true,finalAllLongCap:true,stressOnly:true,hardCeiling:true,financingRecomputed:true,nextClose:true,noLookahead:true,pressureReleaseBelowInitialNAV:true,legacyPreserved:true,dynamicOrdinaryMomentum:true,realLimitDays:realOn.audit.cccStressBlueLimitDays}));
