@@ -1,0 +1,11 @@
+{
+  "requested_at": "2026-11-06T09:28:31Z",
+  "requested_by": "repository owner",
+  "mode": "latest complete published data",
+  "upstream_refresh_runs": {
+    "-us-sentiment": 42195374169,
+    "best-weights": 42195384683,
+    "earnings-revision": 42195393697,
+    "ccc-spread": 42195402383
+  }
+}
