@@ -1,0 +1,17 @@
+/* Shared rank colors for the chart, legend, and date summary. */
+.history-dd--1{--dd-tint:#f4b7be;--dd-ink:#86293c}
+.history-dd--2{--dd-tint:#d7c6f3;--dd-ink:#54368a}
+.history-dd--3{--dd-tint:#b8d6f4;--dd-ink:#225988}
+.chart-legend .drawdown-legend i{background:linear-gradient(90deg,#f4b7be 33%,#d7c6f3 33% 66%,#b8d6f4 66%);border:0;border-radius:2px;height:8px;width:19px}
+.history-dd-shade{fill:var(--dd-tint);opacity:.76;pointer-events:none}
+.history-dd-label{pointer-events:none}
+.history-dd-label path{fill:none;stroke:var(--dd-ink);stroke-width:1;opacity:.65}
+.history-dd-label rect{fill:var(--dd-tint);stroke:var(--dd-ink);stroke-width:.5}
+#nav-chart .history-dd-label text{fill:var(--dd-ink);font-size:13px;font-weight:700}
+.drawdown-summary-title{font-size:13px;color:#405646}
+.drawdown-summary-note{font-size:11px;color:#586b5d;margin:1px 0 8px}
+.drawdown-rank-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,185px),1fr));gap:8px;list-style:none;margin:0;padding:0}
+.drawdown-rank-list li{display:flex;flex-wrap:wrap;align-items:center;column-gap:8px;row-gap:2px;padding:7px 10px;background:#fafbf9;border:1px solid #e1e8df;border-left:4px solid var(--dd-tint);border-radius:5px;color:#465c4c}
+.drawdown-rank-badge{padding:0 5px;border-radius:3px;background:var(--dd-tint);color:var(--dd-ink);font-size:11px}
+.drawdown-rank-list strong{font-size:14px;color:var(--dd-ink);font-variant-numeric:tabular-nums}
+.drawdown-dates,.drawdown-rank-list small{flex-basis:100%;font-size:11px;font-variant-numeric:tabular-nums}

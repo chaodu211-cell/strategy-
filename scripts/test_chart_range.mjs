@@ -21,3 +21,20 @@ const flat=H.summarize([{date:'2025-01-03',nav:1},{date:'2025-01-06',nav:1}]);as
 assert.equal(fixture[0].nav,2,'Range selection must not rewrite the underlying NAV');
 assert.ok(H.tooltipHTML({date:'2025-01-03',value:1},1,null,null,'ready').includes('暂无存档持仓明细'));
 console.log(JSON.stringify({chartRange:true,originalDailyWindowsVerified:checked,weekendSnapping:true,nonCrossing:true,inRangeDrawdown:true,noFutureRecovery:true,turnoverDeduplicated:true,twoPointMinimum:true}));
+
+
+// A second leg below an unrecovered peak belongs to the same episode.
+const path=[100,70,90,65,100,90,110,88,120,108,96,102].map((nav,i)=>({date:`2025-02-${String(i+1).padStart(2,'0')}`,nav}));
+const ranked=H.rankDrawdowns(path);
+assert.equal(ranked.length,3);
+assert.deepEqual(Array.from(ranked,d=>d.troughDate),['2025-02-04','2025-02-08','2025-02-11'],'Count the deepest trough of each independent episode once; ties prefer the earlier trough');
+assert.equal(ranked[0].recoveryDate,'2025-02-05');
+assert.equal(ranked[2].recoveryDate,null);
+assert.equal(H.summarize(path).mdd,ranked[0].value);
+const clipped=H.rankDrawdowns(path.slice(2,4));
+assert.equal(clipped.length,1);
+assert.equal(clipped[0].peakDate,'2025-02-03','No peak outside the selected range');
+assert.equal(clipped[0].recoveryDate,null,'No recovery outside the selected range');
+assert.equal(H.rankDrawdowns(path.slice(4,5)).length,0);
+assert.ok(H.tooltipHTML({date:ranked[1].troughDate,value:1},1,null,ranked,'ready').includes('第2大回撤谷底'));
+console.log(JSON.stringify({topThreeDrawdowns:true,distinctEpisodes:true,selectedRangeOnly:true,rankedTooltip:true}));

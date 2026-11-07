@@ -32,17 +32,33 @@
     if(first>=last)last=first+1;
     return{first,last,start:dates[first],end:dates[last]};
   }
+  // One episode per high-water mark, from peak until first recovery.
+  // The first point in the selected range sets its initial high-water mark.
+  function rankDrawdowns(series,limit=3){
+    let peak=series[0],episode=null;
+    const episodes=[];
+    for(const point of series.slice(1)){
+      if(point.nav>=peak.nav){
+        if(episode){episodes.push({...episode,recoveryDate:point.date});episode=null;}
+        peak=point;
+      }else{
+        const value=point.nav/peak.nav-1;
+        if(!episode||value<episode.value)episode={value,peakDate:peak.date,troughDate:point.date,peakNav:peak.nav,troughNav:point.nav,recoveryDate:null};
+      }
+    }
+    if(episode)episodes.push(episode);
+    return episodes.sort((a,b)=>a.value-b.value||a.troughDate.localeCompare(b.troughDate)).slice(0,limit);
+  }
   function summarize(series,trades=[]){
     if(series.length<2)throw new Error('区间至少保留两个交易日');
     const first=series[0],last=series.at(-1),years=(Date.parse(last.date)-Date.parse(first.date))/86400000/365.25;
     const returns=series.slice(1).map((p,i)=>p.nav/series[i].nav-1),mean=returns.reduce((a,b)=>a+b,0)/returns.length;
     const vol=returns.length>1?Math.sqrt(returns.reduce((s,r)=>s+(r-mean)**2,0)/(returns.length-1))*Math.sqrt(252):0;
-    let peak=first,dd={value:0,peakDate:first.date,troughDate:first.date,peakNav:first.nav,troughNav:first.nav,recoveryDate:first.date};
-    for(const p of series){if(p.nav>=peak.nav)peak=p;const value=p.nav/peak.nav-1;if(value<dd.value)dd={value,peakDate:peak.date,troughDate:p.date,peakNav:peak.nav,troughNav:p.nav,recoveryDate:null};}
-    if(dd.value<0)dd.recoveryDate=series.find(p=>p.date>=dd.troughDate&&p.nav>=dd.peakNav)?.date||null;
+    const drawdowns=rankDrawdowns(series);
+    const dd=drawdowns[0]||{value:0,peakDate:first.date,troughDate:first.date,peakNav:first.nav,troughNav:first.nav,recoveryDate:first.date};
     const days=new Map();for(const t of trades){if(t.date<=first.date||t.date>last.date)continue;let d=days.get(t.date);if(!d){d={equity:0,cash:Math.abs(t.cashAfter-t.cashBefore)};days.set(t.date,d);}d.equity+=Math.abs(t.weightChange);}
     const turnover=[...days.values()].reduce((s,d)=>s+(d.equity+d.cash)/2,0);
-    return{cagr:(last.nav/first.nav)**(1/years)-1,mdd:dd.value,sharpe:vol>0?mean*252/vol:null,vol,turn_yr:turnover/years,drawdown:dd,rebalanceDays:days.size};
+    return{cagr:(last.nav/first.nav)**(1/years)-1,mdd:dd.value,sharpe:vol>0?mean*252/vol:null,vol,turn_yr:turnover/years,drawdown:dd,drawdowns,rebalanceDays:days.size};
   }
   function customReasons(detail, config) {
     const n=value=>Number.isFinite(value)?String(Number(value.toFixed(2))):'—';
@@ -83,8 +99,11 @@
     if(tool)reasons.push(`工具限制：期望 ${tool[1]}，可实现 ${tool[2]}。`);
     return reasons;
   }
-  function tooltipHTML(point, benchmarkValue, detail, drawdown, loadState,annotationHTML='',customConfig=null) {
-    const landmark = point.date === drawdown?.troughDate ? '最大回撤谷底' : point.date === drawdown?.peakDate ? '最大回撤起点' : '';
+  function tooltipHTML(point, benchmarkValue, detail, drawdowns, loadState,annotationHTML='',customConfig=null) {
+    const landmark = (drawdowns||[]).flatMap((d,i)=>{
+      const place=point.date===d.troughDate?'谷底':point.date===d.peakDate?'峰值':'';
+      return place?[`第${i+1}大回撤${place}`]:[];
+    }).join(' / ');
     let html = `<div class="hover-heading"><strong>${escape(point.date)}</strong>${landmark ? `<em>${landmark}</em>` : ''}</div><div class="hover-nav"><span>策略净值 <b>${multiple(point.value)}</b></span><span>QQQ <b>${multiple(benchmarkValue)}</b></span></div>`;
     html += annotationHTML;
     if (!detail) return html + `<p class="hover-note">${loadState === 'error' ? '历史持仓明细加载失败，可重试刷新页面。' : loadState==='ready'?'此交易日暂无存档持仓明细，可扩大区间查看邻近记录。':'正在加载历史持仓明细…'}</p>`;
@@ -100,5 +119,5 @@
     html += `<p class="hover-note">${detail.rebalanced ? '当日收盘已按前一交易日信号再平衡。' : `未触发${band}个百分点再平衡带，权重可能随价格浮动。`}<br>回测模拟持仓，非账户实盘持仓。</p>`;
     return html;
   }
-  root.HistoryChart = Object.freeze({nearestIndex, mergeLandmarks, tooltipHTML,rangeIndices,summarize,customReasons});
+  root.HistoryChart = Object.freeze({nearestIndex, mergeLandmarks, tooltipHTML,rangeIndices,summarize,rankDrawdowns,customReasons});
 })(window);

@@ -114,7 +114,7 @@ function loadHistoryDetails() {
   fetch('./history-positions.json').then(r => {if(!r.ok)throw new Error('历史持仓读取失败');return r.json();}).then(data => {
     if(data.schemaVersion !== 1 || !data.strategies)throw new Error('历史持仓格式无效');
     HISTORY_DETAILS=data;historyLoadState='ready';renderHistory();
-  }).catch(error => {historyLoadState='error';$('#drawdown-summary').textContent='每日最大回撤与历史持仓明细加载失败，请刷新页面重试。';});
+  }).catch(error => {historyLoadState='error';renderHistory();});
 }
 function renderAnnotationControls(collection) {
   const container=$('#annotation-filter-groups');
@@ -134,7 +134,7 @@ function loadDailyHistory(){
   fetch('./history-daily.json').then(r=>{if(!r.ok)throw new Error('日线净值读取失败');return r.json();}).then(d=>{
     if(d.schemaVersion!==1||d.dates?.length<2||d.benchmark?.length!==d.dates.length||DATA.strategies.some(s=>d.strategies?.[s.id]?.length!==d.dates.length))throw new Error('日线净值格式无效');
     DAILY_HISTORY=d;dailyHistoryState='ready';renderHistory();
-  }).catch(()=>{dailyHistoryState='error';$('#history-range-status').textContent='逐日净值加载失败，请刷新后重试时间范围选择。';});
+  }).catch(()=>{dailyHistoryState='error';renderHistory();});
 }
 function attachHistoryRangeControls(){
   const schedule=()=>{if(rangeFrame)return;rangeFrame=requestAnimationFrame(()=>{rangeFrame=null;renderHistory();});};
@@ -165,7 +165,11 @@ function renderRangeMetrics(m,b,note){
   const value=(n,d=1)=>Number.isFinite(n)?fmt(n,d):'—';
   $('#history-metrics').innerHTML=[{label:'区间年化收益',value:pct(m.cagr),note:`QQQ ${pct(b.cagr)}`},{label:'区间最大回撤',value:pct(m.mdd),note:`QQQ ${pct(b.mdd)}`},{label:'区间夏普比率',value:value(m.sharpe,2),note:`QQQ ${value(b.sharpe,2)}`},{label:'区间年换手率',value:`${value(m.turn_yr)}×`,note}].map(m=>`<div class="history-metric"><span>${m.label}</span><strong>${m.value}</strong><small>${m.note}</small></div>`).join('');
 }
-function rangeDrawdownSummary(d){return d.value<0?`最大回撤 ${(d.value*100).toFixed(2)}% · 峰值 ${d.peakDate} → 谷底 ${d.troughDate}${d.recoveryDate?' · 修复 '+d.recoveryDate:' · 区间内尚未修复'}`:'所选区间未出现净值回撤。';}
+function renderDrawdownSummary(drawdowns){
+  const el=$('#drawdown-summary');
+  if(!drawdowns.length){el.textContent='所选区间未出现净值回撤。';return;}
+  el.innerHTML=`<strong class="drawdown-summary-title">区间回撤排名</strong><p class="drawdown-summary-note">底色覆盖峰值到谷底；回到前高前的下跌计为同一段。</p><ol class="drawdown-rank-list">${drawdowns.map((d,i)=>`<li class="history-dd--${i+1}"><span class="drawdown-rank-badge">第 ${i+1} 名</span><strong>${pct(d.value,2)}</strong><span class="drawdown-dates">${escapeHTML(d.peakDate)} → ${escapeHTML(d.troughDate)}</span><small>${d.recoveryDate?'修复 '+escapeHTML(d.recoveryDate):'区间内尚未修复'}</small></li>`).join('')}</ol>`;
+}
 function renderOriginalRange(current,detail){
   const d=DAILY_HISTORY,range=currentChartRange(d.dates,'original',DATA.windows[selection.window]);
   const a=chartRange.first,b=chartRange.last;
@@ -175,8 +179,8 @@ function renderOriginalRange(current,detail){
   $('#history-title').innerHTML=`${displayName(current)} <span>vs 持有 QQQ</span>`;
   renderRangeMetrics(m,bm,`${m.rebalanceDays} 次调仓 · 所选区间`);
   const annotations=HISTORY_DETAILS.modelAnnotations,collection=ModelAnnotations.collect(annotations,detail,range,annotationFilters);renderAnnotationControls(collection);
-  $('#chart-period').textContent=`${range.start} — ${range.end}`;$('#drawdown-summary').textContent=rangeDrawdownSummary(m.drawdown);
-  drawChart(strategy,benchmark,detail,m.drawdown,collection,annotations);
+  $('#chart-period').textContent=`${range.start} — ${range.end}`;renderDrawdownSummary(m.drawdowns);
+  drawChart(strategy,benchmark,detail,m.drawdowns,collection,annotations);
 }
 function renderHistory() {
   const isCustom=historySource==='custom'&&customResult;
@@ -211,14 +215,14 @@ function renderHistory() {
   const strategy=ModelAnnotations.addPoints(HistoryChart.mergeLandmarks(filter(current.history),drawdown),detail,allMarks.dates,false);
   const benchmarkLandmarks=drawdown?{...drawdown,peakNav:detail.points[drawdown.peakDate].benchmarkNav,troughNav:detail.points[drawdown.troughDate].benchmarkNav}:null;
   const benchmark=ModelAnnotations.addPoints(HistoryChart.mergeLandmarks(filter(DATA.benchmark.history),benchmarkLandmarks),detail,allMarks.dates,true);
-  $('#drawdown-summary').textContent=drawdown?`最大回撤 ${(drawdown.value*100).toFixed(2)}% · 峰值 ${drawdown.peakDate} → 谷底 ${drawdown.troughDate}${drawdown.recoveryDate?' · 修复 '+drawdown.recoveryDate:' · 区间内尚未修复'}`:historyLoadState==='error'?'每日最大回撤与历史持仓明细加载失败，请刷新页面重试。':'正在核对每日净值中的最大回撤…';
-  drawChart(strategy, benchmark,detail,drawdown,collection,annotations);
+  $('#drawdown-summary').textContent=historyLoadState==='error'||dailyHistoryState==='error'?'逐日净值或持仓资料加载失败，刷新页面后可重试回撤排名。':'正在计算区间内前三大回撤…';
+  drawChart(strategy, benchmark,detail,[],collection,annotations);
 }
 
 function renderCustomHistory() {
   const result=customResult,detail=result.details,range=currentChartRange(result.history.map(p=>p.date),'custom',result.range);
   const strategy=result.history.slice(chartRange.first,chartRange.last+1),benchmark=result.benchmark.slice(chartRange.first,chartRange.last+1);
-  const m=HistoryChart.summarize(strategy,detail.trades),b=HistoryChart.summarize(benchmark),drawdown=m.drawdown;
+  const m=HistoryChart.summarize(strategy,detail.trades),b=HistoryChart.summarize(benchmark);
   $('#history-title').innerHTML=`${escapeHTML(result.config.name)} <span>自定义 vs 持有 QQQ</span>`;
   renderRangeMetrics(m,b,`${m.rebalanceDays} 次实际调仓 · 所选区间`);
   $('#chart-period').textContent=`${range.start} — ${range.end}`;
@@ -228,8 +232,8 @@ function renderCustomHistory() {
   const annotations={...sourceAnnotations,events:(sourceAnnotations.events||[]).map(e=>customDescriptions[e.type]?{...e,description:customDescriptions[e.type]}:e),readings:customReadings};
   const collection=ModelAnnotations.collect(annotations,detail,range,annotationFilters);renderAnnotationControls(collection);
   $('#annotation-status').textContent=`自定义回测选区：${collection.trades.length} 个ETF仓位调整、${collection.events.length} 个模型标记。成交沿用本次生成的完整回测。`;
-  $('#drawdown-summary').textContent=rangeDrawdownSummary(drawdown);
-  drawChart(strategy,benchmark,detail,drawdown,collection,annotations,result.config);
+  renderDrawdownSummary(m.drawdowns);
+  drawChart(strategy,benchmark,detail,m.drawdowns,collection,annotations,result.config);
 }
 
 function annotationMarkup(collection,normalized,plot) {
@@ -273,12 +277,12 @@ function annotationMarkup(collection,normalized,plot) {
   return{background,tracks,trades,targets};
 }
 
-function drawChart(series,benchmark,details,drawdown,collection,annotations,customConfig=null) {
+function drawChart(series,benchmark,details,drawdowns,collection,annotations,customConfig=null) {
   $('#chart-tooltip').hidden=true;
   $('#chart-tooltip').classList.remove('pinned');
   const svg=$('#nav-chart');
   if(!series.length||!benchmark.length) {svg.innerHTML='<text x="50" y="100">当前区间无净值数据</text>';return;}
-  const width=1000,height=380,pad={left:40,right:22,top:18,bottom:131};
+  const width=1000,height=380,pad={left:40,right:22,top:drawdowns.length?38:18,bottom:131};
   svg.setAttribute('viewBox',`0 0 ${width} ${height}`);
   const normalized=series.map(p=>({...p,value:p.nav/series[0].nav}));
   const bench=benchmark.map(p=>({...p,value:p.nav/benchmark[0].nav}));
@@ -291,20 +295,22 @@ function drawChart(series,benchmark,details,drawdown,collection,annotations,cust
   const ticks=[.25,.5,1,2,3,5,10,20,50,100,200,500,1000].filter(v=>Math.log(v)>=low&&Math.log(v)<=high);
   const startYear=Number(series[0].date.slice(0,4)),endYear=Number(series.at(-1).date.slice(0,4));
   const years=[];for(let yr=startYear;yr<=endYear;yr+=2){const date=yr===startYear?series[0].date:`${yr}-01-01`;years.push({date,label:yr});}
-  let drawdownMarkup='';
-  if(drawdown){
-    const peak={x:x(drawdown.peakDate),y:y(drawdown.peakNav/series[0].nav)},trough={x:x(drawdown.troughDate),y:y(drawdown.troughNav/series[0].nav)};
-    const labelWidth=152,labelX=Math.min(Math.max(pad.left+4,trough.x+11),width-pad.right-labelWidth),labelY=Math.min(Math.max(pad.top+4,trough.y+12),height-pad.bottom-28);
-    drawdownMarkup=`<g class="drawdown-markers" aria-label="最大回撤 ${(drawdown.value*100).toFixed(2)}%"><path d="M${peak.x},${peak.y} L${trough.x},${trough.y}" class="drawdown-link"/><circle cx="${peak.x}" cy="${peak.y}" r="4" class="drawdown-peak"/><circle cx="${trough.x}" cy="${trough.y}" r="4.5" class="drawdown-trough"/><rect x="${labelX}" y="${labelY}" width="${labelWidth}" height="24" rx="4" class="drawdown-label-bg"/><text x="${labelX+10}" y="${labelY+16}" class="drawdown-label">最大回撤 ${(drawdown.value*100).toFixed(2)}%</text></g>`;
-    svg.setAttribute('aria-label',`策略与QQQ历史净值。最大回撤 ${(drawdown.value*100).toFixed(2)}%，峰值 ${drawdown.peakDate}，谷底 ${drawdown.troughDate}。`);
-  }
+  const left=pad.left,right=width-pad.right,plotBottom=height-pad.bottom,badgeWidth=94,gap=6;
+  const bands=drawdowns.map((d,i)=>({d,rank:i+1,start:x(d.peakDate),end:x(d.troughDate)}));
+  const rail=bands.map(b=>({...b,center:(b.start+b.end)/2})).sort((a,b)=>a.center-b.center);
+  for(let i=0;i<rail.length;i++)rail[i].labelX=Math.max(rail[i].center-badgeWidth/2,i?rail[i-1].labelX+badgeWidth+gap:left);
+  for(let i=rail.length-1;i>=0;i--)rail[i].labelX=Math.min(rail[i].labelX,i<rail.length-1?rail[i+1].labelX-badgeWidth-gap:right-badgeWidth);
+  const drawdownShades=bands.map(({rank,start,end})=>`<rect class="history-dd-shade history-dd--${rank}" data-drawdown-rank="${rank}" x="${start}" y="${pad.top}" width="${Math.max(2,end-start)}" height="${plotBottom-pad.top}"/>`).join('');
+  const drawdownLabels=rail.map(({d,rank,center,labelX})=>`<g class="history-dd-label history-dd--${rank}"><path d="M${labelX+badgeWidth/2},29 L${center},${pad.top}"/><rect x="${labelX}" y="7" width="${badgeWidth}" height="22" rx="5"/><text x="${labelX+badgeWidth/2}" y="22" text-anchor="middle">#${rank}  ${pct(d.value,2)}</text></g>`).join('');
+  svg.setAttribute('aria-label','策略与QQQ历史净值。'+drawdowns.map((d,i)=>`第${i+1}大回撤 ${pct(d.value,2)}，峰值 ${d.peakDate}，谷底 ${d.troughDate}。`).join(''));
   const marks=annotationMarkup(collection,normalized,{x,y,width,height,pad});
-  const archived=details?normalized.filter(p=>details.points[p.date]):normalized;
+  const landmarks=new Set(drawdowns.flatMap(d=>[d.peakDate,d.troughDate]));
+  const archived=details?normalized.filter(p=>details.points[p.date]||landmarks.has(p.date)):normalized;
   const hoverPoints=archived.length?archived:normalized;
-  svg.innerHTML=`<defs><linearGradient id="chart-fill" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stop-color="#a1b49a" stop-opacity=".13"/><stop offset="100%" stop-color="#a1b49a" stop-opacity="0"/></linearGradient><clipPath id="plot-clip"><rect x="${pad.left}" y="${pad.top}" width="${width-pad.left-pad.right}" height="${height-pad.top-pad.bottom}"/></clipPath></defs>${marks.background}`+
+  svg.innerHTML=`<defs><linearGradient id="chart-fill" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stop-color="#a1b49a" stop-opacity=".13"/><stop offset="100%" stop-color="#a1b49a" stop-opacity="0"/></linearGradient><clipPath id="plot-clip"><rect x="${pad.left}" y="${pad.top}" width="${width-pad.left-pad.right}" height="${height-pad.top-pad.bottom}"/></clipPath></defs>${marks.background}<g clip-path="url(#plot-clip)" aria-hidden="true">${drawdownShades}</g>${drawdownLabels}`+
     ticks.map(v=>`<line class="chart-grid" x1="${pad.left}" y1="${y(v)}" x2="${width-pad.right}" y2="${y(v)}"/><text x="${pad.left-10}" y="${y(v)+3}" text-anchor="end">${v}×</text>`).join('')+
     years.map(p=>`<text x="${x(p.date)}" y="${height-pad.bottom+17}" text-anchor="middle">${p.label}</text>`).join('')+
-    `<g clip-path="url(#plot-clip)"><path d="${path(normalized)} L${x(series.at(-1).date)},${height-pad.bottom} L${pad.left},${height-pad.bottom} Z" fill="url(#chart-fill)"/><path class="benchmark-line" d="${path(bench)}"/><path class="chart-line" d="${path(normalized)}"/>${drawdownMarkup}${marks.trades}<line id="hover-line" class="hover-line" y1="${pad.top}" y2="${height-pad.bottom}" visibility="hidden"/><circle id="hover-dot" r="3.5" fill="#52785d" stroke="white" stroke-width="2" visibility="hidden"/></g>${marks.tracks}<rect id="chart-hitbox" tabindex="0" role="slider" aria-label="历史净值点，方向键查看当时持仓与依据" aria-valuemin="0" aria-valuemax="${hoverPoints.length-1}" aria-valuenow="0" x="${pad.left}" y="${pad.top}" width="${width-pad.left-pad.right}" height="${height-pad.top-8}" fill="transparent"/>`;
+    `<g clip-path="url(#plot-clip)"><path d="${path(normalized)} L${x(series.at(-1).date)},${height-pad.bottom} L${pad.left},${height-pad.bottom} Z" fill="url(#chart-fill)"/><path class="benchmark-line" d="${path(bench)}"/><path class="chart-line" d="${path(normalized)}"/>${marks.trades}<line id="hover-line" class="hover-line" y1="${pad.top}" y2="${height-pad.bottom}" visibility="hidden"/><circle id="hover-dot" r="3.5" fill="#52785d" stroke="white" stroke-width="2" visibility="hidden"/></g>${marks.tracks}<rect id="chart-hitbox" tabindex="0" role="slider" aria-label="历史净值点，方向键查看当时持仓与依据" aria-valuemin="0" aria-valuemax="${hoverPoints.length-1}" aria-valuenow="0" x="${pad.left}" y="${pad.top}" width="${width-pad.left-pad.right}" height="${height-pad.top-8}" fill="transparent"/>`;
   const hit=$('#chart-hitbox'),tooltip=$('#chart-tooltip');
   hit.setAttribute('aria-describedby','chart-tooltip');
   let activeIndex=-1,pinned=false;
@@ -322,7 +328,7 @@ function drawChart(series,benchmark,details,drawdown,collection,annotations,cust
     $('#hover-line').setAttribute('x1',x(p.date));$('#hover-line').setAttribute('x2',x(p.date));$('#hover-line').setAttribute('visibility','visible');
     $('#hover-dot').setAttribute('cx',x(p.date));$('#hover-dot').setAttribute('cy',y(p.value));$('#hover-dot').setAttribute('visibility','visible');
     if(index!==activeIndex||tooltip.hidden){
-      tooltip.innerHTML='<div class="tooltip-pin-bar"><span>点击图中点位固定详情，可滚动阅读</span><button type="button" data-close-chart-detail aria-label="关闭历史详情">×</button></div>'+HistoryChart.tooltipHTML(p,b.value,details?.points[p.date],drawdown,historyLoadState,ModelAnnotations.tooltipHTML(p.date,collection,annotations?.readings?.[p.date]),customConfig);
+      tooltip.innerHTML='<div class="tooltip-pin-bar"><span>点击图中点位固定详情，可滚动阅读</span><button type="button" data-close-chart-detail aria-label="关闭历史详情">×</button></div>'+HistoryChart.tooltipHTML(p,b.value,details?.points[p.date],drawdowns,historyLoadState,ModelAnnotations.tooltipHTML(p.date,collection,annotations?.readings?.[p.date]),customConfig);
       tooltip.scrollTop=0;
     }
     activeIndex=index;tooltip.hidden=false;
