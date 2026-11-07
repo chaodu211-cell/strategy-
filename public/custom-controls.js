@@ -99,7 +99,7 @@
         const a=result.audit;
         $('#custom-summary').hidden=false;
         $('#custom-summary').innerHTML=`<strong>${esc(result.config.name)}</strong><span>${result.range.start} — ${result.range.end} · ${a.days.toLocaleString()} 个交易日 · ${a.rebalanceDays} 次调仓</span><p>${a.limitedDays?`${a.limitedDays} 日的目标受当时可交易工具及100%资金权重限制，已按实际可实现敞口计算。`:'全部目标均可按所选工具及蓝点融资规则实现。'}${result.config.bearGateEnabled?` 熊市闸门条件命中 ${a.bearGateDays} 日，常态多头受限 ${a.bearGateAppliedDays} 日。`:''}${result.config.drawdownGateEnabled?` 回撤闸触发状态 ${a.drawdownGateDays} 日，常态多头减半 ${a.drawdownGateAppliedDays} 日。`:''}${result.config.cccStressBlueLimitEnabled?` CCC压力位蓝点限制已启用（10日波动率、跟随当日默认标的），降低最终多头目标 ${a.cccStressBlueLimitDays} 日。`:''}${a.syntheticDays?` 含 ${a.syntheticDays} 日合成ETF持仓。`:' 未持有合成ETF。'}${a.financingDays?` 融资持仓 ${a.financingDays} 日，年利率固定5%，累计利息相当于初始资金的 ${(a.financingInterestPaid*100).toFixed(2)}%。`:''}</p>`;
-        status.textContent=`回测已生成，可在图左上角切换查看周期。${saved?'设置已保存在本浏览器。':'本浏览器无法保存设置，可下载设置备份。'}`;
+        status.textContent=`回测已生成，可在图右上角切换查看周期。${saved?'设置已保存在本浏览器。':'本浏览器无法保存设置，可下载设置备份。'}`;
         onResult(result,C.readings(source));
         $('#history').scrollIntoView({behavior:'smooth',block:'start'});
       }catch(e){status.textContent=(e.message||'回测未完成，请重试。')+(lastResult?' 本次未生成新回测，下方保留上次结果。':'');if(lastResult)$('#custom-stale').hidden=false;status.classList.add('error');}
