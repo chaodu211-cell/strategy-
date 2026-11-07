@@ -11,6 +11,7 @@ let HISTORY_DETAILS = null;
 let historyLoadState = 'idle';
 let DAILY_HISTORY=null,dailyHistoryState='idle',chartRange=null,chartRangeDates=[],rangeFrame=null;
 let customResult = null, customReadings = null, historySource = 'original';
+let customChartWindow = 'inSample';
 const annotationFilters = new Set(ModelAnnotations.TYPES.map(t=>t.id));
 const strategyDetails = StrategyDetails.attach();
 let selection = { family: 'simple', risk: 'balanced', window: 'inSample' };
@@ -54,6 +55,11 @@ function init() {
   $('#refresh-live').addEventListener('click',()=>refreshLive());
   $$('[data-family]').forEach(button=>button.addEventListener('click',()=>{selection.family=button.dataset.family;historySource='original';render();}));
   $$('[data-window]').forEach(button=>button.addEventListener('click',()=>{selection.window=button.dataset.window;chartRange=null;renderHistory();}));
+  $$('[data-custom-chart-window]').forEach(button => button.addEventListener('click', () => {
+    customChartWindow = button.dataset.customChartWindow;
+    chartRange = null;
+    renderHistory();
+  }));
   $('#download-snapshot').addEventListener('click', downloadSnapshot);
   $('#annotation-controls').addEventListener('change',event=>{const id=event.target.dataset.annotationFilter;if(!id)return;if(event.target.checked)annotationFilters.add(id);else annotationFilters.delete(id);renderHistory();});
   attachHistoryRangeControls();
@@ -186,6 +192,7 @@ function renderHistory() {
   const isCustom=historySource==='custom'&&customResult;
   $$('[data-history-source]').forEach(b=>{b.classList.toggle('active',b.dataset.historySource===historySource);b.setAttribute('aria-pressed',b.dataset.historySource===historySource);});
   $('#history-window-controls').hidden=!!isCustom;
+  $('#history-custom-window-controls').hidden=!isCustom;
   $('#history-caveat-copy').textContent=isCustom?'自定义规则由你设定。反复根据历史结果调整参数可能过拟合；源模型设计也参考过历史，2007–16不能视作完全独立样本外。历史回测不保证未来表现。':'十年数据参与了参数选择，属于样本内；2007–16年的信号设计也参考了历史，只能视作半样本外。回撤预算是筛选条件，不能保证未来回撤上限。';
   if(isCustom){renderCustomHistory();return;}
   loadHistoryDetails();loadDailyHistory();
@@ -220,7 +227,15 @@ function renderHistory() {
 }
 
 function renderCustomHistory() {
-  const result=customResult,detail=result.details,range=currentChartRange(result.history.map(p=>p.date),'custom',result.range);
+  const result = customResult, detail = result.details;
+  const windows = {...DATA.windows, full: result.range};
+  const range = currentChartRange(result.history.map(point => point.date), 'custom', windows[customChartWindow]);
+  $$('[data-custom-chart-window]').forEach(button => {
+    const preset = windows[button.dataset.customChartWindow];
+    const active = range.start === preset.start && range.end === preset.end;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-pressed', active);
+  });
   const strategy=result.history.slice(chartRange.first,chartRange.last+1),benchmark=result.benchmark.slice(chartRange.first,chartRange.last+1);
   const m=HistoryChart.summarize(strategy,detail.trades),b=HistoryChart.summarize(benchmark);
   $('#history-title').innerHTML=`${escapeHTML(result.config.name)} <span>自定义 vs 持有 QQQ</span>`;
