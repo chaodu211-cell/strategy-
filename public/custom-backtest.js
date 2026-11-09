@@ -25,6 +25,14 @@
     longBond:{series:'DGS30',lag:1,lookback:126,onBp:50,offBelowBp:40}
   };
   const DEFAULT_MOMENTUM_METHOD='combined';
+  // Bear gate methods. A missing field keeps the original fitted-aggressive gate so
+  // exported and registered settings replay unchanged; new browser defaults use the ensemble.
+  const BEAR_GATE_METHODS=Object.freeze({
+    ensemble:Object.freeze({label:'四类投票（E2）'}),
+    ma200:Object.freeze({label:'200日线且均线下行（原拟合·进取）'})
+  });
+  const DEFAULT_BEAR_GATE_METHOD='ensemble';
+  const ENSEMBLE=Object.freeze({trend:Object.freeze([150,200,250]),slope:Object.freeze([10,21,42]),ma:Object.freeze([150,200,250]),months:Object.freeze([8,10,12]),momentum:Object.freeze([9,12,15])});
   const MOMENTUM_METHODS=Object.freeze({
     monthly:Object.freeze({label:'月度动量',weakness:false,longBond:false}),
     relative:Object.freeze({label:'相对走弱确认',weakness:true,longBond:false}),
@@ -40,7 +48,7 @@
     const method=cfg.momentum?.method??DEFAULT_MOMENTUM_METHOD;
     return usesMomentum(cfg)&&MOMENTUM_METHODS[method]?.longBond===true;
   }
-  function defaults(){return {schemaVersion:1,name:'我的双模型策略',start:'2016-10-21',end:'2026-10-22',asset:'QQQ',bearGateEnabled:false,drawdownGateEnabled:false,cccStressBlueLimitEnabled:false,momentum:momentumDefaults(),baseExposure:1,allowSynthetic:false,band:.05,costMultiplier:1,financingAnnualRate:FINANCING_RATE,rules:RULES.map(r=>({id:r.id,action:r.action,value:r.value,...(r.conditional?{unlock:yellowDefaults()}:{days:r.days}),priority:r.priority,...(r.id==='ccc_top'?{stackWithCredit:true}:{}),...(r.id==='blue'?{steps:r.steps,onlyIfNotLower:true,asset:'inherit'}:{})}))};}
+  function defaults(){return {schemaVersion:1,name:'我的双模型策略',start:'2016-10-21',end:'2026-10-22',asset:'QQQ',bearGateEnabled:false,bearGateMethod:DEFAULT_BEAR_GATE_METHOD,drawdownGateEnabled:false,cccStressBlueLimitEnabled:false,momentum:momentumDefaults(),baseExposure:1,allowSynthetic:false,band:.05,costMultiplier:1,financingAnnualRate:FINANCING_RATE,rules:RULES.map(r=>({id:r.id,action:r.action,value:r.value,...(r.conditional?{unlock:yellowDefaults()}:{days:r.days}),priority:r.priority,...(r.id==='ccc_top'?{stackWithCredit:true}:{}),...(r.id==='blue'?{steps:r.steps,onlyIfNotLower:true,asset:'inherit'}:{})}))};}
   function validate(input,data){
     if(!input||input.schemaVersion!==1)throw new Error('自定义设置版本无效。');
     const c=copy(input);
@@ -48,6 +56,7 @@
     c.name=c.name.trim();c.financingAnnualRate=FINANCING_RATE;delete c.toolMode;
     c.bearGateEnabled=c.bearGateEnabled===undefined?(c.bear200Enabled===undefined?false:c.bear200Enabled):c.bearGateEnabled;
     if(typeof c.bearGateEnabled!=='boolean')throw new Error('熊市闸门开关无效。');
+    if(c.bearGateMethod!==undefined&&(typeof c.bearGateMethod!=='string'||!Object.hasOwn(BEAR_GATE_METHODS,c.bearGateMethod)))throw new Error('熊市闸门方法无效。');
     c.cccStressBlueLimitEnabled=c.cccStressBlueLimitEnabled===undefined?false:c.cccStressBlueLimitEnabled;
     if(typeof c.cccStressBlueLimitEnabled!=='boolean')throw new Error('CCC压力位蓝点限制开关无效。');
     c.drawdownGateEnabled=c.drawdownGateEnabled===undefined?false:c.drawdownGateEnabled;
@@ -124,12 +133,12 @@
     const stackApplies=r=>creditStack&&(r===top||r===creditState);
     const stackLabel=creditStack?`${top.label} × ${creditState.label}`:null;
     const rawRuleExposure=r=>stackApplies(r)?creditStack.target:!r?cfg.baseExposure:r.action==='flat'?0:r.action==='long'?r.value:r.action==='short'?-r.value:r.action==='blue_ladder'?blueLadder.target:cfg.baseExposure*r.value;
-    const bearGate=cfg.bearGateEnabled?bearGate200(data,t):null;
+    const bearGate=cfg.bearGateEnabled?((cfg.bearGateMethod??'ma200')==='ensemble'?bearGateEnsemble(data,t):bearGate200(data,t)):null;
     // Match fitted-aggressive bear_mult=0 on the ordinary long channel.
     // Yellow's dedicated configuration, inverse positions and blue bottom-fishing
     // are separate channels, so the gate is not a global liquidation override.
     const gateApplies=r=>bearGate?.active&&r?.id!=='yellow'&&r?.id!=='blue'&&rawRuleExposure(r)>0;
-    const beforeBrake=r=>gateApplies(r)?0:rawRuleExposure(r);
+    const beforeBrake=r=>gateApplies(r)?rawRuleExposure(r)*bearGate.multiplier:rawRuleExposure(r);
     const brakeApplies=r=>drawdownGate?.active&&r?.id!=='yellow'&&r?.id!=='blue'&&beforeBrake(r)>0;
     const ruleExposure=r=>brakeApplies(r)?Math.min(3,beforeBrake(r))*.5:beforeBrake(r);
     const ordinaryExposure=r=>Math.max(-3,Math.min(3,ruleExposure(r)));
@@ -147,7 +156,8 @@
     if(bearGate)bearGate.applied=!!gateApplies(winner);
     if(drawdownGate)drawdownGate.applied=!!brakeApplies(winner);
     if(creditStack)creditStack.selected=!!stackApplies(winner);
-    let state=bearGate?.applied?'熊市闸门':creditStack?.selected?stackLabel:winner?.label||'常态';
+    let state=bearGate?.applied&&bearGate.multiplier===0?'熊市闸门':creditStack?.selected?stackLabel:winner?.label||'常态';
+    if(bearGate?.applied&&bearGate.multiplier>0)state+=' · 熊市闸门×'+Number(bearGate.multiplier.toFixed(2));
     if(drawdownGate?.applied)state+=' · 回撤闸';
     if(blueLadder){blueLadder.selected=winner===ladder;if(blueLadder.selected)selection=ladderAsset;}
     if(blueComparison)blueComparison.selected=winner===blue;
@@ -175,7 +185,11 @@
     }
     const action=winner?`${winner.label}：${ACTIONS[winner.action]}${!['flat','ignore'].includes(winner.action)?' '+number(winner.value)+(winner.action==='scale'?'':'×'):''}`:`常态：${selection} ${number(cfg.baseExposure)}×`;
     const reasons=[winner?`${action}。${winner.id==='yellow'?'锁定至解锁条件满足，不按天数到期':winner.state?'条件保持时生效':`信号日 ${data.dates[winner.sourceIndex]}，有效 ${winner.days} 个交易日（含信号日）`}；优先级 ${winner.priority}。`:`当前无已启用的预警规则生效，按常态 ${selection} ${number(cfg.baseExposure)} 倍配置。`];
-    if(bearGate){
+    if(bearGate?.method==='ensemble'){
+      const b=bearGate,f=b.families;
+      const votes=`200日线且均线下行 ${f.trend.bullish}/${f.trend.total}、收盘高于均线 ${f.ma.bullish}/${f.ma.total}、月线 ${f.monthly.bullish}/${f.monthly.total}、动量 ${f.momentum.bullish}/${f.momentum.total} 看多`;
+      reasons.unshift(`熊市闸门（四类投票）：${votes}${b.monthEnd?`（月线与动量按 ${b.monthEnd} 月末收盘判断）`:''}；乘数 = 四类看多比例的平均 = ${number(b.multiplier)}。${b.active?`常态多头 × ${number(b.multiplier)}；比较基准 ${number(b.baselineBefore)}× → ${number(b.baselineAfter)}×。${b.applied?'本次常态多头按乘数缩减，余款持有BIL。':'本次采用独立配置或原目标已非多头。'}`:'全部看多，不限制。'}${b.ready?'':' 部分子信号历史不足，暂按看多计。'} 黄点锁仓与空头配置保留；蓝点抄底仍按敞口比较及自定义优先级执行。次一交易日收盘成交；看多比例回升即按比例恢复。`);
+    }else if(bearGate){
       const b=bearGate;
       const status=!b.ready?`可用 ${b.count} 个复权收盘数据，须完整221个交易日以比较当前200日均线与21个交易日前均线；当前不触发。`:`QQQ收盘 / 200日均线 = ${number(b.priceToMA*100)}%；当前均线 / 21个交易日前均线 = ${number(b.maToPastMA*100)}%。${b.active?'两项均低于100%，闸门条件命中。':'未同时低于100%，闸门未触发。'}`;
       reasons.unshift(`熊市闸门（同拟合·进取）：${status}${b.active?` 常态多头乘数为0；比较基准 ${number(b.baselineBefore)}× → ${number(b.baselineAfter)}×。${b.applied?'本次常态多头归零，余款持有BIL。':'本次采用独立配置或原目标已非多头。'}`:''} 黄点锁仓配置与空头配置保留；蓝点抄底仍按敞口比较及自定义优先级执行。次一交易日收盘成交；任一熊市条件不再满足即解除，其他规则状态继续更新。`);
@@ -242,6 +256,45 @@
   }
   // Match QQQ < MA200 && MA200 < MA200.shift(21). A common price
   // scale cancels in both comparisons; the two 200-close windows need 221 closes.
+  // E2 ensemble: four trend families on QQQ adjusted closes, each averaged over a fixed
+  // neighbourhood of parameters, then averaged equally. 1 = all bullish, 0 = all bearish.
+  // Daily families use closes through t. Monthly families use the latest month-end close
+  // strictly before t, so they change on the first session of a month and stay causal live.
+  const ensembleCache=new WeakMap();
+  function ensembleSeries(data){
+    const n=data.dates.length,hit=ensembleCache.get(data);
+    if(hit&&hit.n===n&&hit.returns===data.returns)return hit;
+    const qi=data.symbols.findIndex(s=>s.symbol==='QQQ'),bi=data.symbols.findIndex(s=>s.symbol==='BIL');
+    if(qi<0)throw new Error('熊市闸门缺少QQQ复权行情。');
+    if(bi<0)throw new Error('熊市闸门缺少BIL收益。');
+    const P=new Float64Array(n),CR=new Float64Array(n),S=new Float64Array(n+1);let bad=n;
+    P[0]=1;CR[0]=1;S[1]=1;
+    for(let t=1;t<n;t++){
+      const r=data.returns[t]?.[qi],b=data.returns[t]?.[bi];
+      if(typeof r!=='number'||!Number.isFinite(r)||r<=-1||typeof b!=='number'||!Number.isFinite(b)||b<=-1){bad=t;break;}
+      P[t]=P[t-1]*(1+r);CR[t]=CR[t-1]*(1+b);S[t+1]=S[t]+P[t];
+    }
+    const monthEnds=[];for(let i=0;i+1<n;i++)if(data.dates[i].slice(0,7)!==data.dates[i+1].slice(0,7))monthEnds.push(i);
+    const out={n,returns:data.returns,P,CR,S,bad,monthEnds};ensembleCache.set(data,out);return out;
+  }
+  function bearGateEnsemble(data,t){
+    const s=ensembleSeries(data);
+    if(t>=s.bad)throw new Error('熊市闸门缺少有效QQQ或BIL复权收益 '+data.dates[s.bad]);
+    const {P,CR,S,monthEnds}=s,below=(a,b)=>a/b<1-1e-12;
+    const ma=(k,i)=>i>=k-1?(S[i+1]-S[i+1-k])/k:NaN;
+    const fam=()=>({bullish:0,total:0,ready:0});
+    const f={trend:fam(),ma:fam(),monthly:fam(),momentum:fam()};
+    const vote=(g,ready,bear)=>{g.total++;if(ready)g.ready++;if(!(ready&&bear))g.bullish++;};
+    for(const k of ENSEMBLE.trend)for(const l of ENSEMBLE.slope){const m=ma(k,t),q=t-l>=0?ma(k,t-l):NaN;vote(f.trend,Number.isFinite(m)&&Number.isFinite(q),below(P[t],m)&&below(m,q));}
+    for(const k of ENSEMBLE.ma){const m=ma(k,t);vote(f.ma,Number.isFinite(m),below(P[t],m));}
+    let lo=0,hi=monthEnds.length;while(lo<hi){const mid=(lo+hi)>>1;if(monthEnds[mid]<=t-1)lo=mid+1;else hi=mid;}
+    const j=lo-1,e=j>=0?monthEnds[j]:null;
+    for(const m of ENSEMBLE.months){const ready=j>=m-1;let avg=NaN;if(ready){avg=0;for(let i=j-m+1;i<=j;i++)avg+=P[monthEnds[i]];avg/=m;}vote(f.monthly,ready,ready&&below(P[e],avg));}
+    for(const L of ENSEMBLE.momentum){const ready=j>=L,a=ready?monthEnds[j-L]:null;vote(f.momentum,ready,ready&&below(P[e]/P[a],CR[e]/CR[a]));}
+    const share=g=>g.bullish/g.total,multiplier=(share(f.trend)+share(f.ma)+share(f.monthly)+share(f.momentum))/4;
+    const ready=Object.values(f).every(g=>g.ready===g.total);
+    return{method:'ensemble',asset:'QQQ',date:data.dates[t],monthEnd:e===null?null:data.dates[e],ready,families:f,multiplier,active:multiplier<1-1e-12};
+  }
   function bearGate200(data,t){
     const period=200,slopeLookback=21,required=period+slopeLookback,j=data.symbols.findIndex(s=>s.symbol==='QQQ');
     if(j<0)throw new Error('熊市闸门缺少QQQ复权行情。');
@@ -389,5 +442,5 @@
     return{config:cfg,range:{start:data.dates[start],end:data.dates[end]},history,benchmark,metrics,benchmarkMetrics,details:{points,trades},audit:{inputHash:data.meta.inputHash,...(data.meta.dgs30CSVHash?{dgs30CSVHash:data.meta.dgs30CSVHash}:{}),days:history.length,bearGateDays,bearGateAppliedDays,drawdownGateDays,drawdownGateAppliedDays,cccStressBlueLimitDays,limitedDays,syntheticDays,rebalanceDays,costPaid,financingDays,financingInterestPaid,financingAnnualRate:FINANCING_RATE},sourceMeta:copy(data.meta)};
   }
   function readings(data){return Object.fromEntries(data.dates.map((d,i)=>{const v=data.readings[i],mask=data.signals[i];return[d,{temperature:v[0],tdc:v[1],creditSpread:v[2],creditMA200:v[3],creditPercentile:v[4],creditSourceDate:v[5],creditStress:!!(mask&(1<<7)),creditAbove:!!(mask&(1<<8))}];}));}
-  root.CustomBacktest=Object.freeze({RULES,ACTIONS,MOMENTUM_METHODS,DEFAULT_MOMENTUM_METHOD,defaults,validate,usesMomentum,usesDgs30,resolveTarget,bearGate200,momentumChoice,stats,run,readings});
+  root.CustomBacktest=Object.freeze({RULES,ACTIONS,MOMENTUM_METHODS,DEFAULT_MOMENTUM_METHOD,BEAR_GATE_METHODS,DEFAULT_BEAR_GATE_METHOD,bearGateEnsemble,defaults,validate,usesMomentum,usesDgs30,resolveTarget,bearGate200,momentumChoice,stats,run,readings});
 })(typeof window!=='undefined'?window:globalThis);

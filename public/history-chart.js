@@ -67,7 +67,8 @@
     const base=String(detail.state||'常态').split(' · ')[0],rules=config.rules||[];
     const rule=rules.find(r=>labels[r.id]===base),ladder=detail.blueLadder,credit=detail.creditStack;
     const reasons=[],source=detail.reasons||[];
-    if(detail.bearGate?.applied)reasons.push('熊市闸门：QQQ低于200日线且均线下行，常态多头归零。');
+    const partialGate=detail.bearGate?.applied&&detail.bearGate.method==='ensemble'&&detail.bearGate.multiplier>0;
+    if(detail.bearGate?.applied&&!partialGate)reasons.push(detail.bearGate.method==='ensemble'?'熊市闸门（四类投票）：四类趋势信号全部看空，常态多头归零。':'熊市闸门：QQQ低于200日线且均线下行，常态多头归零。');
     else if(ladder?.selected)reasons.push(`蓝点分批：${ladder.asset}，已建 ${Math.min(ladder.count,ladder.steps)}/${ladder.steps} 份，原目标 ${x(ladder.target)}。`);
     else if(credit?.selected)reasons.push(`CCC见顶 × ${credit.creditLabel}：常态敞口 × ${n(credit.combinedMultiplier)}。`);
     else if(rule){
@@ -75,6 +76,7 @@
       const original=source.find(r=>r.startsWith(base+'：'))||'',window=original.match(/信号日 (\d{4}-\d{2}-\d{2})，有效 (\d+) 个交易日/);
       reasons.push(`${base}：${action}${window?`（${window[1]}起，${window[2]}日窗口）`:''}。`);
     }else reasons.push(base==='常态'?`常态配置：${detail.selection}，目标 ${x(detail.targetExposure)}。`:`生效规则：${base}。`);
+    if(partialGate)reasons.push(`熊市闸门（四类投票）：常态多头 × ${n(detail.bearGate.multiplier)}。`);
     const blueMode=rules.find(r=>r.id==='blue')?.asset??'inherit';
     const usesMomentum=ladder?.selected?(blueMode==='momentum'||(blueMode==='inherit'&&config.asset==='momentum')):config.asset==='momentum';
     if(usesMomentum&&detail.momentum)reasons.push(detail.momentum.reason);

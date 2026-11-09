@@ -4,7 +4,7 @@
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#172731">
 <title>双模型策略 · 持仓与研究</title>
 <meta name="description" content="读懂最优拟合与 CCC 利差信号，查看六种双模型策略的目标持仓、配置原因与历史检验。">
-<link rel="icon" href="./favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="./style.css?v=20261109-methods">
+<link rel="icon" href="./favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="./style.css?v=20261109-e2">
 <link rel="stylesheet" href="./history-drawdowns.css?v=20261107">
 </head>
 <body>
@@ -62,7 +62,7 @@
 <label>常态底层敞口<span class="custom-number"><input name="baseExposure" type="number" min="0" max="3" step="0.05" required><span>倍</span></span></label>
 
 </div>
-<div class="custom-bear-filter"><label class="bear-gate-toggle"><input type="checkbox" name="bearGateEnabled" id="bear-gate-enabled">启用熊市闸门（同拟合·进取）</label><p>同时满足两项才触发：QQQ复权收盘价低于200日均线，且该均线低于21个交易日前的水平。触发时常态多头敞口乘以0，余款持有BIL；任一条件不再满足即解除，按其他有效规则或常态恢复。</p><p>保留黄点锁仓与空头的专用配置。蓝点抄底仍可按敞口比较及自定义优先级执行，比较使用闸门处理后的常态/锁仓目标；蓝点计数、黄点解锁及动量选品继续更新。信号次一交易日收盘成交。统一参考QQQ，需要完整221日数据；不足时不触发。默认关闭，修改后重新生成回测。</p></div>
+<div class="custom-bear-filter"><label class="bear-gate-toggle"><input type="checkbox" name="bearGateEnabled" id="bear-gate-enabled">启用熊市闸门</label><label class="bear-gate-method">闸门方法 <select name="bearGateMethod" id="bear-gate-method"><option value="ensemble">四类投票（E2）</option><option value="ma200">200日线且均线下行（原拟合·进取）</option></select></label><p><strong>四类投票（E2）</strong>：每天用QQQ复权收盘价算四类趋势信号，每类取一组相邻参数的看多比例，四类再等权平均，得到0~1的乘数，常态多头乘以它，余款持有BIL。① 收盘低于N日均线且均线低于K日前（N=150/200/250，K=10/21/42，9组）；② 收盘低于N日均线（150/200/250）；③ 月末收盘低于最近8/10/12个月末均值；④ 过去9/12/15个月收益低于BIL。①②每天判断；③④在每月首个交易日按上月末收盘判断，当月保持。转空的信号越多减得越多，回升时按比例恢复。参数在1927-2004年美国全市场与科技行业长历史上按“邻域最差”预先登记挑选，不按本站回测优化。</p><p><strong>200日线且均线下行</strong>：同时满足两项才触发：QQQ复权收盘价低于200日均线，且该均线低于21个交易日前的水平。触发时常态多头敞口乘以0；任一条件不再满足即解除。旧设置缺少方法字段时沿用此口径。</p><p>保留黄点锁仓与空头的专用配置。蓝点抄底仍可按敞口比较及自定义优先级执行，比较使用闸门处理后的常态/锁仓目标；蓝点计数、黄点解锁及动量选品继续更新。信号次一交易日收盘成交。统一参考QQQ。原口径需要完整221日数据，不足时不触发；四类投票中历史不足的子信号暂按看多计。默认关闭，修改后重新生成回测。</p></div>
 <div class="custom-bear-filter"><label class="bear-gate-toggle"><input type="checkbox" name="drawdownGateEnabled" id="drawdown-gate-enabled">启用回撤闸（同拟合·进取）</label><p>目标权重参考净值从历史峰值回撤达到20%时，常态多头目标减半；回撤修复到10%以内解除。蓝点抄底、黄点专用配置、空头和空仓保留，蓝点敞口比较使用减半后的常态目标；CCC压力限制仍在最后对全部多头封顶。</p><p>沿用拟合·进取参考净值口径：自历史数据首日起，以前一信号日最终目标ETF权重和当日复权收益连续累计，包含蓝点及CCC限仓后的目标反馈；不计BIL收益、交易成本、融资利息或再平衡漂移，和图中实际净值不同。切换回测区间不重置状态，信号次一交易日收盘成交。默认关闭，勾选后重新生成回测；导出及调仓依据可查看触发状态和参考回撤。</p></div>
 <div id="momentum-options" class="momentum-options" hidden>
 <p><strong>QQQ / SOXX 动量选品</strong></p>
@@ -101,5 +101,5 @@
 <div class="loading-error" id="loading-error" hidden>数据载入失败。请刷新页面，或检查 data.json 文件。</div>
 </main></div><div class="toast" id="toast" role="status" hidden></div>
 <dialog id="strategy-dialog" class="strategy-dialog" aria-labelledby="strategy-dialog-title" aria-describedby="strategy-dialog-description"><div class="strategy-dialog-shell"><header class="strategy-dialog-header"><div><p class="eyebrow">STRATEGY PLAYBOOK</p><h2 id="strategy-dialog-title">策略详情</h2><p id="strategy-dialog-description">具体策略规则 · 当前仓位与依据</p></div><button class="strategy-close" data-close-strategy aria-label="关闭策略详情">×</button></header><div id="strategy-dialog-body" class="strategy-dialog-body"></div><footer class="strategy-dialog-footer"><button class="button" data-strategy-history>查看本策略历史图 →</button></footer></div></dialog>
-<script src="./strategy-details.js?v=20261105-details" defer></script><script src="./model-annotations.js" defer></script><script src="./history-chart.js?v=20261109-momentum" defer></script><script src="./custom-backtest.js?v=20261109-methods" defer></script><script src="./custom-controls.js?v=20261109-chao" defer></script><script src="./app.js?v=20261109-chao" defer></script><script src="./forward.js?v=20261109-chao" defer></script>
+<script src="./strategy-details.js?v=20261105-details" defer></script><script src="./model-annotations.js" defer></script><script src="./history-chart.js?v=20261109-e2" defer></script><script src="./custom-backtest.js?v=20261109-e2" defer></script><script src="./custom-controls.js?v=20261109-e2" defer></script><script src="./app.js?v=20261109-chao" defer></script><script src="./forward.js?v=20261109-e2" defer></script>
 </body></html>
