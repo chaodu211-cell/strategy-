@@ -16,7 +16,7 @@ const panel=soxx=>({
   returns:dates.map(()=>[0,soxx]),
   dgs30:Object.fromEntries(dates.map(date=>[date,400]))
 });
-const replay=data=>{const memory={};return data.dates.map((_,t)=>C.momentumChoice(data,t,memory));};
+const replay=(data,method)=>{const memory={};return data.dates.map((_,t)=>C.momentumChoice(data,t,memory,method));};
 const first=dates.findIndex((d,i)=>i>=126&&d.slice(0,7)!==dates[i-1].slice(0,7));
 const next=dates.findIndex((d,i)=>i>first&&d.slice(0,7)!==dates[i-1].slice(0,7));
 assert.ok(first>126);
@@ -94,6 +94,12 @@ const strong=replay(releasedStrong);
 assert.deepEqual([strong[check].selection,strong[check].weakness.check,strong[check].weakness.locked],['SOXX','bond_release',false],'Without relative weakness the release restores SOXX');
 const noRates=structuredClone(weekly);delete noRates.dgs30;
 assert.throws(()=>replay(noRates),/DGS30/,'Missing DGS30 data cannot silently disable the bond filter');
+const monthlyOnly=replay(noRates,'monthly')[check],relativeOnly=replay(noRates,'relative')[check];
+assert.deepEqual([monthlyOnly.selection,monthlyOnly.weakness,monthlyOnly.bond],['SOXX',null,null]);
+assert.deepEqual([relativeOnly.selection,relativeOnly.weakness.locked,relativeOnly.bond],['QQQ',true,null]);
+const bondOnly=replay(alreadyQQQ,'bond');
+assert.equal(bondOnly[check-1].selection,'QQQ','Bond-only filters SOXX while the filter is on');
+assert.deepEqual([bondOnly[check].selection,bondOnly[check].weakness],['SOXX',null],'Bond-only restores the monthly winner without a relative check');
 const absentKey=structuredClone(weekly);delete absentKey.dgs30[dates[check-1]];
 assert.throws(()=>replay(absentKey),/DGS30/,'An unsupplied observation is an error, not a missing value');
 const future=structuredClone(weekly);
@@ -131,6 +137,12 @@ cfg.asset='momentum';
 cfg.momentum={lookback:22,skip:0,frequency:'daily',buffer:.1};
 const run=C.run(raw,cfg);
 assert.deepEqual(run.config.momentum,C.defaults().momentum,'Legacy browser settings use the fixed three-layer rules');
+const monthlyConfig={...cfg,momentum:{method:'monthly'}};
+assert.equal(C.validate(monthlyConfig).momentum.method,'monthly');
+assert.equal(C.usesDgs30(monthlyConfig),false);
+assert.throws(()=>C.validate({...cfg,momentum:{method:'invalid'}}),/选品方法/);
+const monthlyRun=C.run({...raw,dgs30:undefined},monthlyConfig);
+assert.ok(Object.values(monthlyRun.details.points).every(p=>p.momentum.method==='monthly'&&p.momentum.selection===p.momentum.monthlySelection));
 let soxx=0,weak=0,rates=0;
 for(const point of Object.values(run.details.points)){
   const m=point.momentum;

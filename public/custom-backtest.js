@@ -24,10 +24,21 @@
     weakness:{short:21,long:63,frequency:'weekly'},
     longBond:{series:'DGS30',lag:1,lookback:126,onBp:50,offBelowBp:40}
   };
-  const momentumDefaults=()=>copy(MOMENTUM);
+  const DEFAULT_MOMENTUM_METHOD='combined';
+  const MOMENTUM_METHODS=Object.freeze({
+    monthly:Object.freeze({label:'月度动量',weakness:false,longBond:false}),
+    relative:Object.freeze({label:'相对走弱确认',weakness:true,longBond:false}),
+    bond:Object.freeze({label:'长债过滤',weakness:false,longBond:true}),
+    combined:Object.freeze({label:'综合方法',weakness:true,longBond:true})
+  });
+  const momentumDefaults=(method=DEFAULT_MOMENTUM_METHOD)=>({...copy(MOMENTUM),method});
   function usesMomentum(cfg){
     const blue=cfg.rules[2];
     return cfg.asset==='momentum'||(blue.action==='blue_ladder'&&blue.asset==='momentum');
+  }
+  function usesDgs30(cfg){
+    const method=cfg.momentum?.method??DEFAULT_MOMENTUM_METHOD;
+    return usesMomentum(cfg)&&MOMENTUM_METHODS[method]?.longBond===true;
   }
   function defaults(){return {schemaVersion:1,name:'我的双模型策略',start:'2016-10-21',end:'2026-10-22',asset:'QQQ',bearGateEnabled:false,drawdownGateEnabled:false,cccStressBlueLimitEnabled:false,momentum:momentumDefaults(),baseExposure:1,allowSynthetic:false,band:.05,costMultiplier:1,financingAnnualRate:FINANCING_RATE,rules:RULES.map(r=>({id:r.id,action:r.action,value:r.value,...(r.conditional?{unlock:yellowDefaults()}:{days:r.days}),priority:r.priority,...(r.id==='ccc_top'?{stackWithCredit:true}:{}),...(r.id==='blue'?{steps:r.steps,onlyIfNotLower:true,asset:'inherit'}:{})}))};}
   function validate(input,data){
@@ -72,7 +83,9 @@
       }
       return{id:r.id,action:rule.action,value:rule.value,...(r.conditional?{unlock}:{days:rule.action==='blue_ladder'?40:rule.days}),priority:rule.priority,...(r.id==='ccc_top'?{stackWithCredit}:{}),...(r.id==='blue'?{steps,onlyIfNotLower,asset}:{})};
     });
-    if(usesMomentum(c)||c.momentum===undefined)c.momentum=momentumDefaults();
+    const method=c.momentum?.method;
+    if(method!==undefined&&(typeof method!=='string'||!Object.hasOwn(MOMENTUM_METHODS,method)))throw new Error('动量选品方法无效。');
+    if(usesMomentum(c)||c.momentum===undefined||method!==undefined)c.momentum=momentumDefaults(method);
     return c;
   }
   function resolveTarget(data,cfg,t,last){
@@ -95,7 +108,7 @@
     const yellowLock={locked:memory.locked,triggerDate:memory.triggerIndex===null?null:data.dates[memory.triggerIndex],releaseDate:memory.releaseIndex===null?null:data.dates[memory.releaseIndex],releaseReason:memory.releaseReason,tdc:finite(tdc)?tdc:null,qqqDrawdown52:finite(dd52)?dd52:null,unlock:{...unlock}};
     const active=RULES.map((r,i)=>({...cfg.rules[i],label:r.label,index:i,sourceIndex:last[i],state:!!r.state,active:r.conditional?memory.locked:r.state?!!(mask&(1<<i)):t-last[i]<(cfg.rules[i].action==='blue_ladder'?40:cfg.rules[i].days)})).filter(r=>r.active&&r.action!=='ignore').sort((a,b)=>b.priority-a.priority||a.index-b.index);
     const blueAsset=cfg.rules[2].asset??'inherit';
-    const momentum=usesMomentum(cfg)?momentumChoice(data,t,last):null;
+    const momentum=usesMomentum(cfg)?momentumChoice(data,t,last,cfg.momentum?.method):null;
     const defaultAsset=cfg.asset==='momentum'?momentum.selection:cfg.asset;
     let desired=cfg.baseExposure,selection=defaultAsset,blueLadder=null;
     const ladder=active.find(r=>r.action==='blue_ladder');
@@ -260,8 +273,20 @@
     const day=new Date(date+'T00:00:00Z');
     return +day-((day.getUTCDay()+6)%7)*86400000;
   }
-  function momentumChoice(data,t,memory){
-    const {lookback,skip,weakness,longBond}=MOMENTUM;
+  function advanceLongBond(data,t,wasActive){
+    const {lag,lookback,onBp,offBelowBp}=MOMENTUM.longBond;
+    if(!data.dgs30||typeof data.dgs30!=='object')throw new Error('动量选品缺少 FRED DGS30 收益率数据，不能静默关闭长债过滤。');
+    const observationDate=data.dates[t-lag]??null;
+    const baselineDate=data.dates[t-lag-lookback]??null;
+    // An explicit null carries the state forward. An absent key is a missing input.
+    for(const d of [observationDate,baselineDate])if(d!==null&&!Object.hasOwn(data.dgs30,d))throw new Error(`动量选品缺少 ${d} 的 DGS30 收益率输入。`);
+    const observed=observationDate===null?null:data.dgs30[observationDate],baseline=baselineDate===null?null:data.dgs30[baselineDate];
+    const deltaBp=Number.isInteger(observed)&&Number.isInteger(baseline)?observed-baseline:null;
+    const active=deltaBp===null?wasActive:deltaBp>=(wasActive?offBelowBp:onBp);
+    return{active,deltaBp,observationDate,baselineDate};
+  }
+  function momentumChoice(data,t,memory,method=DEFAULT_MOMENTUM_METHOD){
+    const {lookback,skip,weakness}=MOMENTUM,options=MOMENTUM_METHODS[method];
     const date=data.dates[t],previous=data.dates[t-1];
     const monthStart=!previous||date.slice(0,7)!==previous.slice(0,7);
     const m=memory.momentum??={monthlySelection:'QQQ',selection:'QQQ',decisionDate:null,scores:null,weakness:null,bond:null};
@@ -278,31 +303,29 @@
         m.through=data.dates[end];
       }
     }
-    // The bond layer uses only t-1 and earlier yields, so it is resolved before the weakness check.
-    if(!data.dgs30||typeof data.dgs30!=='object')throw new Error('动量选品缺少 FRED DGS30 收益率数据，不能静默关闭长债过滤。');
-    const observationDate=data.dates[t-longBond.lag]??null;
-    const baselineDate=data.dates[t-longBond.lag-longBond.lookback]??null;
-    // null = checked and unavailable (state carries forward); an absent key means the input was never supplied.
-    for(const d of [observationDate,baselineDate])if(d!==null&&!Object.hasOwn(data.dgs30,d))throw new Error(`动量选品缺少 ${d} 的 DGS30 收益率输入。`);
-    const observed=observationDate===null?null:data.dgs30[observationDate],baseline=baselineDate===null?null:data.dgs30[baselineDate];
-    const deltaBp=Number.isInteger(observed)&&Number.isInteger(baseline)?observed-baseline:null;
+    // Resolve the lagged bond layer before checking for a same-day release.
     const wasActive=m.bond?.active??false;
-    const active=deltaBp===null?wasActive:deltaBp>=(wasActive?longBond.offBelowBp:longBond.onBp);
-    m.bond={active,deltaBp,observationDate,baselineDate};
-    // Check relative weakness at the month start, at a weekly check of an incoming SOXX selection,
-    // and on the day the bond filter releases, so SOXX is never bought back without a weakness check.
-    const weekCheck=!monthStart&&m.selection==='SOXX'&&weekStart(date)!==weekStart(previous);
-    const released=!monthStart&&wasActive&&!active&&!m.weakness?.locked;
-    if(m.monthlySelection==='SOXX'&&(monthStart||weekCheck||released)){
-      const change=days=>grossReturn(data,'SOXX',t-days,t)/grossReturn(data,'QQQ',t-days,t)-1;
-      const shortChange=change(weakness.short),longChange=change(weakness.long);
-      m.weakness={date,check:monthStart?'month':released?'bond_release':'week',shortChange,longChange,locked:shortChange<0&&longChange<0};
+    m.bond=options.longBond?advanceLongBond(data,t,wasActive):null;
+    const active=m.bond?.active??false;
+    if(options.weakness&&m.monthlySelection==='SOXX'){
+      const weekCheck=!monthStart&&m.selection==='SOXX'&&weekStart(date)!==weekStart(previous);
+      const released=!monthStart&&wasActive&&!active&&!m.weakness?.locked;
+      if(monthStart||weekCheck||released){
+        const change=days=>grossReturn(data,'SOXX',t-days,t)/grossReturn(data,'QQQ',t-days,t)-1;
+        const shortChange=change(weakness.short),longChange=change(weakness.long);
+        m.weakness={date,check:monthStart?'month':released?'bond_release':'week',shortChange,longChange,locked:shortChange<0&&longChange<0};
+      }
     }
     m.selection=m.monthlySelection==='SOXX'&&!m.weakness?.locked&&!active?'SOXX':'QQQ';
     const monthly=m.scores?`月度动量（${m.decisionDate}）选 ${m.monthlySelection}，QQQ ${number(m.scores.QQQ*100)}%，SOXX ${number(m.scores.SOXX*100)}%`:'月度动量等待完整观察期';
-    const relative=m.weakness?`相对走弱（${m.weakness.date}）21日 ${number(m.weakness.shortChange*100)}%，63日 ${number(m.weakness.longChange*100)}%，${m.weakness.locked?'本月锁定 QQQ':'未触发'}`:'相对走弱未触发';
-    const bond=`DGS30 过滤${active?'开启':'关闭'}，${deltaBp===null?'缺少所需观测值，沿用状态':`${observationDate} 较 ${baselineDate} 变动 ${deltaBp} bp`}`;
-    return{...m,reason:`${monthly}。 ${relative}。 ${bond}。 动量选品结果 ${m.selection}。`};
+    const reasons=[`选品方法 ${options.label}`,monthly];
+    if(options.weakness)reasons.push(m.weakness?`相对走弱（${m.weakness.date}）21日 ${number(m.weakness.shortChange*100)}%，63日 ${number(m.weakness.longChange*100)}%，${m.weakness.locked?'本月锁定 QQQ':'未触发'}`:'相对走弱未触发');
+    if(m.bond){
+      const {deltaBp,observationDate,baselineDate}=m.bond;
+      reasons.push(`DGS30 过滤${active?'开启':'关闭'}，${deltaBp===null?'缺少所需观测值，沿用状态':`${observationDate} 较 ${baselineDate} 变动 ${deltaBp} bp`}`);
+    }
+    reasons.push(`动量选品结果 ${m.selection}`);
+    return{...m,method,reason:reasons.join('。 ')+'。'};
   }
   function stats(history,turnover){
     const years=(Date.parse(history.at(-1).date)-Date.parse(history[0].date))/86400000/365.25;
@@ -366,5 +389,5 @@
     return{config:cfg,range:{start:data.dates[start],end:data.dates[end]},history,benchmark,metrics,benchmarkMetrics,details:{points,trades},audit:{inputHash:data.meta.inputHash,...(data.meta.dgs30CSVHash?{dgs30CSVHash:data.meta.dgs30CSVHash}:{}),days:history.length,bearGateDays,bearGateAppliedDays,drawdownGateDays,drawdownGateAppliedDays,cccStressBlueLimitDays,limitedDays,syntheticDays,rebalanceDays,costPaid,financingDays,financingInterestPaid,financingAnnualRate:FINANCING_RATE},sourceMeta:copy(data.meta)};
   }
   function readings(data){return Object.fromEntries(data.dates.map((d,i)=>{const v=data.readings[i],mask=data.signals[i];return[d,{temperature:v[0],tdc:v[1],creditSpread:v[2],creditMA200:v[3],creditPercentile:v[4],creditSourceDate:v[5],creditStress:!!(mask&(1<<7)),creditAbove:!!(mask&(1<<8))}];}));}
-  root.CustomBacktest=Object.freeze({RULES,ACTIONS,defaults,validate,usesMomentum,resolveTarget,bearGate200,momentumChoice,stats,run,readings});
+  root.CustomBacktest=Object.freeze({RULES,ACTIONS,MOMENTUM_METHODS,DEFAULT_MOMENTUM_METHOD,defaults,validate,usesMomentum,usesDgs30,resolveTarget,bearGate200,momentumChoice,stats,run,readings});
 })(typeof window!=='undefined'?window:globalThis);

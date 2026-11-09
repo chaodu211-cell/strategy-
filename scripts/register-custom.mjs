@@ -13,10 +13,11 @@ const source=await readFile(args.settings),document=JSON.parse(source),panel=awa
 if(document.inputHash!==panel.meta.inputHash)throw new Error('设置导出的研究输入哈希与本站不一致。');
 const custom=C.validate({...document.config,name:args.name},panel);
 const sourceCopy=structuredClone(document.config);sourceCopy.name=args.name;
-if(C.usesMomentum(custom)){
+if(C.usesDgs30(custom)){
   const rates=await read('public/dgs30.json');
   if(document.audit?.dgs30CSVHash!==rates.csvSHA256)throw new Error('请用当前网页的动量规则重新生成回测并下载设置。');
   panel.dgs30=rates.yieldsBp;
+  if(sourceCopy.momentum&&sourceCopy.momentum.method===undefined)sourceCopy.momentum.method=C.DEFAULT_MOMENTUM_METHOD;
 }
 if(!isDeepStrictEqual(sourceCopy,custom))throw new Error('文件参数未完整保留。');
 const backtest=C.run(panel,custom);
@@ -27,7 +28,7 @@ const result=registerCustomVersion(previous,config,custom,{id:args.id,startDate:
 if(result.idempotent){console.log(JSON.stringify({idempotent:true,id:args.id}));process.exit(0);}
 const extra=result.state.customRows||[];
 for(const r of extra){panel.dates.push(r.date);panel.returns.push(r.returns);panel.costs.push(r.costs);panel.tradable.push(r.tradable);panel.signals.push(r.signals);panel.yellowContext.tdc.push(r.tdc);panel.yellowContext.qqqDrawdown52.push(r.dd52);}
-if(C.usesMomentum(custom)){
+if(C.usesDgs30(custom)){
   const warning=await extendDgs30(panel,extra);
   if(warning)console.warn(warning);
   result.audit.dgs30CSVHash=document.audit.dgs30CSVHash;

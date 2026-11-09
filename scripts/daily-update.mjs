@@ -67,7 +67,7 @@ try{
     // Browser defaults can change without silently changing a running strategy version.
     const registered={...config.custom,rules:config.custom.rules.map(r=>r.id==='blue'?{...r,onlyIfNotLower:r.onlyIfNotLower??false}:r.id==='ccc_top'?{...r,stackWithCredit:r.stackWithCredit??false}:r.id==='yellow'?{...r,unlock:{...r.unlock,blueEnabled:r.unlock?.blueEnabled??false}}:r)};
     const custom=C.validate({...registered,end:panel.meta.end},panel),memory=C.RULES.map(()=>-1e9);let latest;
-    if(C.usesMomentum(custom)){
+    if(C.usesDgs30(custom)){
       panel.dgs30=(await read('public/dgs30.json')).yieldsBp;
       const warning=await extendDgs30(panel,extra);
       if(warning)status.warnings.push(warning);
