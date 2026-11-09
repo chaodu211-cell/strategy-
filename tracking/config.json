@@ -10,16 +10,29 @@
   "custom": {
     "schemaVersion": 1,
     "name": "Chao#1",
-    "start": "2007-01-03",
-    "end": "2026-10-22",
-    "asset": "QQQ",
-    "bearGateEnabled": false,
+    "asset": "momentum",
     "momentum": {
       "lookback": 126,
       "skip": 21,
       "frequency": "monthly",
-      "buffer": 0
+      "buffer": 0,
+      "weakness": {
+        "short": 21,
+        "long": 63,
+        "frequency": "weekly"
+      },
+      "longBond": {
+        "series": "DGS30",
+        "lag": 1,
+        "lookback": 126,
+        "onBp": 50,
+        "offBelowBp": 40
+      },
+      "method": "combined"
     },
+    "bearGateEnabled": false,
+    "drawdownGateEnabled": false,
+    "cccStressBlueLimitEnabled": true,
     "baseExposure": 3,
     "band": 0.25,
     "costMultiplier": 1,
@@ -47,7 +60,7 @@
         "priority": 95,
         "steps": 10,
         "onlyIfNotLower": true,
-        "asset": "SOXX"
+        "asset": "inherit"
       },
       {
         "id": "blue_soft",
@@ -99,22 +112,24 @@
         "priority": 80
       }
     ],
+    "start": "2007-01-03",
+    "end": "2026-10-22",
     "financingAnnualRate": 0.05
   },
   "notes": [
     "净值首个完整收盘以1为基准，初始继承已观测目标；首次基准不计入场费，此后包含BIL收益、分档成交成本及融资5% ACT/365。",
     "同一策略版本参数固定；历史净值只追加，不随上游模型回写而重算。",
-    "自定义策略按本文件登记；浏览器草稿不会自动上传。旧版本归档，新版本从登记后可执行的完整收盘开始，以1为基准记录。"
+    "自定义策略按本文件登记。历史回放按当前参数重算，后续每日跟踪接续该净值，旧版本归档。"
   ],
-  "customId": "custom-chao-1",
+  "customId": "custom-chao-1-combined",
   "customRegistration": {
-    "strategyId": "custom-chao-1",
-    "previousStrategyId": "custom-momentum",
+    "strategyId": "custom-chao-1-combined",
+    "previousStrategyId": "custom-chao-1",
     "name": "Chao#1",
-    "startDate": "2026-10-28",
-    "registeredAt": "2026-10-28T15:51:11Z",
-    "configVersion": "fac9f5eca6659c5ec9210b3b909afe6d84c7f490386fb29d3a6edb61bb39b54d",
-    "sourceSettingsFile": "自定义策略_设置 (4).json",
-    "sourceSettingsSHA256": "4d10930e9709a93617a231fcd2326c948ea499c76430de3d1c20a1fa29106f3b"
+    "startDate": "2026-11-09",
+    "registeredAt": "2026-11-09T14:27:55Z",
+    "configVersion": "185bb4fe5104599275309a9313dbfda3272edb901cc992c57d03cc280e3cea13",
+    "sourceSettingsFile": "自定义策略_设置 (2).json",
+    "sourceSettingsSHA256": "655469f6ae95886bdbe316446d3e825514c7cb868fd8060b318a4aff8ab5e9d8"
   }
 }

@@ -63,7 +63,7 @@ function init() {
   $('#download-snapshot').addEventListener('click', downloadSnapshot);
   $('#annotation-controls').addEventListener('change',event=>{const id=event.target.dataset.annotationFilter;if(!id)return;if(event.target.checked)annotationFilters.add(id);else annotationFilters.delete(id);renderHistory();});
   attachHistoryRangeControls();
-  CustomControls.attach((result,readings)=>{chartRange=null;customResult=result;customReadings=readings;historySource='custom';$$('[data-history-source="custom"]').forEach(b=>b.disabled=false);renderHistory();});
+  CustomControls.attach((result,readings,registered)=>{chartRange=null;if(registered)customChartWindow='full';customResult=result;customReadings=readings;historySource='custom';$$('[data-history-source="custom"]').forEach(b=>b.disabled=false);renderHistory();});
   $$('[data-history-source]').forEach(button=>button.addEventListener('click',()=>{historySource=button.dataset.historySource;renderHistory();}));
   $('[data-strategy-history]').addEventListener('click',()=>{historySource='original';renderHistory();});
   $('#open-strategy-details').addEventListener('click',()=>strategyDetails.open(selected(),'#open-strategy-details'));
@@ -125,14 +125,14 @@ function loadHistoryDetails() {
 function renderAnnotationControls(collection) {
   const container=$('#annotation-filter-groups');
   if(!container.dataset.ready){
-    const groups=[['trade','策略成交'],['fit','最优拟合'],['credit','CCC 利差']];
-    const icons={buy:'▲',sell:'▼',add:'⊕',reduce:'⊖',red:'●',red_ad:'○',blue:'●',blue_soft:'○',yellow:'◆',ccc_top:'▼',ccc_bot:'▲',ccc_stress:'▰',ccc_above:'▱'};
+    const groups=[['trade','仓位变化'],['fit','最优拟合'],['credit','信用风险']];
+    const icons={buy:'▲',sell:'▼',add:'⊕',reduce:'⊖',red:'●',red_ad:'○',blue:'●',blue_soft:'○',yellow:'◆',ccc_top:'警',ccc_bot:'缓',ccc_stress:'高',ccc_above:'偏'};
     container.innerHTML=groups.map(([group,label])=>`<div class="annotation-filter-row"><span class="annotation-group-label">${label}</span><div>${ModelAnnotations.TYPES.filter(t=>t.group===group).map(t=>`<label class="annotation-filter" style="--annotation-color:${t.color}"><input type="checkbox" data-annotation-filter="${t.id}" checked><i aria-hidden="true">${icons[t.id]||'●'}</i><span>${escapeHTML(t.label)}</span><small data-annotation-count="${t.id}">—</small></label>`).join('')}</div></div>`).join('');
     container.dataset.ready='true';
   }
   $$('[data-annotation-filter]').forEach(input=>input.checked=annotationFilters.has(input.dataset.annotationFilter));
   $$('[data-annotation-count]').forEach(el=>{el.textContent=HISTORY_DETAILS?.modelAnnotations?(collection.counts[el.dataset.annotationCount]||0):'—';});
-  $('#annotation-status').textContent=HISTORY_DETAILS?.modelAnnotations?`本区间显示 ${collection.trades.length} 个ETF仓位调整、${collection.events.length} 个模型标记、${collection.intervals.length} 段信用状态。买卖按实际收盘成交日；CCC信号额外滞后一交易日。`:'正在载入历史特殊点位…';
+  $('#annotation-status').textContent=HISTORY_DETAILS?.modelAnnotations?`本区间显示 ${collection.trades.length} 个已成交的仓位变化、${collection.events.length} 个模型标记、${collection.intervals.length} 段信用状态。目标不变的再平衡只在悬停明细展示；CCC信号额外滞后一交易日。`:'正在载入历史特殊点位…';
 }
 function loadDailyHistory(){
   if(dailyHistoryState!=='idle')return;
@@ -246,7 +246,7 @@ function renderCustomHistory() {
   const customDescriptions={yellow:'最优拟合趋势下跌预警；自定义黄点按已启用的TDC、价格修复或实心蓝点条件解锁，不按持续天数结束。',blue:blueUnlock?'最优拟合实心蓝点；本次设置启用永久解除黄点锁定，解锁与是否实际抄底分开判断。':'最优拟合实心蓝点；本次设置未启用蓝点解除黄点锁定，操作依本次设置。',blue_soft:'最优拟合空心蓝点；不触发实心蓝点永久解锁，仓位依本次设置。'};
   const annotations={...sourceAnnotations,events:(sourceAnnotations.events||[]).map(e=>customDescriptions[e.type]?{...e,description:customDescriptions[e.type]}:e),readings:customReadings};
   const collection=ModelAnnotations.collect(annotations,detail,range,annotationFilters);renderAnnotationControls(collection);
-  $('#annotation-status').textContent=`自定义回测选区：${collection.trades.length} 个ETF仓位调整、${collection.events.length} 个模型标记。成交沿用本次生成的完整回测。`;
+  $('#annotation-status').textContent=`自定义回测选区：${collection.trades.length} 个已成交的仓位变化、${collection.events.length} 个模型标记。目标不变的再平衡只在悬停明细展示。`;
   renderDrawdownSummary(m.drawdowns);
   drawChart(strategy,benchmark,detail,m.drawdowns,collection,annotations,result.config);
 }
@@ -257,12 +257,13 @@ function annotationMarkup(collection,normalized,plot) {
   const ySlots={red:282,red_ad:289,yellow:296,blue:303,blue_soft:310,ccc_top:329,ccc_bot:338,ccc_stress_on:347,ccc_stress_off:347,ccc_above_on:356,ccc_above_off:356};
   const eventFilter=type=>type.startsWith('ccc_stress')?'ccc_stress':type.startsWith('ccc_above')?'ccc_above':type;
   const targets=[];
-  let background='',tracks=`<g class="model-annotation-tracks"><rect x="${pad.left}" y="274" width="${width-pad.left-pad.right}" height="42" rx="3" class="fit-track-bg"/><rect x="${pad.left}" y="322" width="${width-pad.left-pad.right}" height="43" rx="3" class="credit-track-bg"/><text x="3" y="299" class="annotation-track-label">拟合</text><text x="3" y="348" class="annotation-track-label">CCC</text>`;
+  let background='',tracks=`<g class="model-annotation-tracks"><rect x="${pad.left}" y="274" width="${width-pad.left-pad.right}" height="42" rx="3" class="fit-track-bg"/><rect x="${pad.left}" y="322" width="${width-pad.left-pad.right}" height="43" rx="3" class="credit-track-bg"/><text x="3" y="299" class="annotation-track-label">拟合</text><text x="3" y="348" class="annotation-track-label">信用</text>`;
   for(const interval of collection.intervals){
     const left=x(interval.clipStart),right=x(interval.clipEnd),color=specs[interval.type]?.color||'#c2a879';
     if(interval.type==='ccc_stress')background+=`<rect class="credit-pressure-shade" data-pressure-start="${interval.start}" x="${left}" y="${pad.top}" width="${Math.max(1,right-left)}" height="${plotBottom-pad.top}"/>`;
     const ty=interval.type==='ccc_stress'?324:354,th=interval.type==='ccc_stress'?27:8;
-    tracks+=`<rect class="credit-state-band ${interval.type}" data-state-start="${interval.start}" x="${left}" y="${ty}" width="${Math.max(1,right-left)}" height="${th}" fill="${color}"/>`;
+    tracks+=`<rect class="credit-state-band ${interval.type}" data-state-start="${interval.start}" x="${left}" y="${ty}" width="${Math.max(1,right-left)}" height="${th}" fill="${color}"><title>${escapeHTML(interval.label)}</title></rect>`;
+    if(right-left>115)tracks+=`<text x="${left+6}" y="${interval.type==='ccc_stress'?341:361}" class="credit-band-label">${escapeHTML(interval.label)}</text>`;
   }
   for(const event of collection.events){
     const cx=x(event.date),cy=ySlots[event.type]||338,color=specs[eventFilter(event.type)]?.color||'#a4b69a';
@@ -272,7 +273,7 @@ function annotationMarkup(collection,normalized,plot) {
     else if(event.type==='yellow'||event.type.startsWith('ccc_stress'))shape=`<path d="M${cx},${cy-3.8} L${cx+3.8},${cy} L${cx},${cy+3.8} L${cx-3.8},${cy} Z" fill="${event.type.endsWith('_off')?'white':color}" stroke="${color}" stroke-width="1"/>`;
     else if(event.type.startsWith('ccc_above'))shape=`<rect x="${cx-2.7}" y="${cy-2.7}" width="5.4" height="5.4" fill="${event.type.endsWith('_off')?'white':color}" stroke="${color}" stroke-width=".9"/>`;
     else shape=`<circle cx="${cx}" cy="${cy}" r="2.7" fill="${event.type==='red_ad'||event.type==='blue_soft'?'#fbfcf8':color}" stroke="${color}" stroke-width="1.1"/>`;
-    tracks+=`<g class="model-signal-marker" data-event-date="${event.date}" data-event-type="${event.type}">${shape}</g>`;
+    tracks+=`<g class="model-signal-marker" data-event-date="${event.date}" data-event-type="${event.type}"><title>${escapeHTML(event.label)} · ${event.date}</title>${shape}</g>`;
     targets.push({date:event.date,x:cx,y:cy});
   }
   tracks+='</g>';

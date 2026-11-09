@@ -1,0 +1,152 @@
+{
+  "schemaVersion": 1,
+  "strategyId": "custom-chao-1-combined",
+  "previousStrategyId": "custom-chao-1",
+  "name": "Chao#1",
+  "startDate": "2026-11-09",
+  "registeredAt": "2026-11-09T14:27:55Z",
+  "configVersion": "185bb4fe5104599275309a9313dbfda3272edb901cc992c57d03cc280e3cea13",
+  "sourceSettingsFile": "自定义策略_设置 (2).json",
+  "sourceSettingsSHA256": "655469f6ae95886bdbe316446d3e825514c7cb868fd8060b318a4aff8ab5e9d8",
+  "previousConfigHash": "d4282a102c6be4dfedc812d1c94120034ad5911432b8ebc2c7ceb0cc78593ce4",
+  "nextConfigHash": "6a6822cc5453ec4a9f834dd8a7c985c17a47c3eedd032cf4dafa09edb471eb7f",
+  "previousPointsHash": "ef598f529e47f0af4fff7356c52d75087a4d6e06d887e5800e83d37f50481c39",
+  "previousPointsCount": 8,
+  "previousLastDate": "2026-11-06",
+  "configSnapshot": {
+    "schemaVersion": 1,
+    "name": "Chao#1",
+    "asset": "momentum",
+    "momentum": {
+      "lookback": 126,
+      "skip": 21,
+      "frequency": "monthly",
+      "buffer": 0,
+      "weakness": {
+        "short": 21,
+        "long": 63,
+        "frequency": "weekly"
+      },
+      "longBond": {
+        "series": "DGS30",
+        "lag": 1,
+        "lookback": 126,
+        "onBp": 50,
+        "offBelowBp": 40
+      },
+      "method": "combined"
+    },
+    "bearGateEnabled": false,
+    "drawdownGateEnabled": false,
+    "cccStressBlueLimitEnabled": true,
+    "baseExposure": 3,
+    "band": 0.25,
+    "costMultiplier": 1,
+    "allowSynthetic": true,
+    "rules": [
+      {
+        "id": "red",
+        "action": "flat",
+        "value": 0,
+        "days": 30,
+        "priority": 99
+      },
+      {
+        "id": "red_ad",
+        "action": "flat",
+        "value": 0,
+        "days": 30,
+        "priority": 98
+      },
+      {
+        "id": "blue",
+        "action": "blue_ladder",
+        "value": 4,
+        "days": 40,
+        "priority": 95,
+        "steps": 10,
+        "onlyIfNotLower": true,
+        "asset": "inherit"
+      },
+      {
+        "id": "blue_soft",
+        "action": "ignore",
+        "value": 1,
+        "days": 20,
+        "priority": 20
+      },
+      {
+        "id": "yellow",
+        "action": "flat",
+        "value": 0,
+        "unlock": {
+          "tdcEnabled": true,
+          "tdcThreshold": 60,
+          "priceEnabled": true,
+          "repairPct": 3,
+          "blueEnabled": true
+        },
+        "priority": 94
+      },
+      {
+        "id": "ccc_top",
+        "action": "scale",
+        "value": 0.7,
+        "days": 63,
+        "priority": 60,
+        "stackWithCredit": true
+      },
+      {
+        "id": "ccc_bot",
+        "action": "ignore",
+        "value": 1,
+        "days": 20,
+        "priority": 40
+      },
+      {
+        "id": "ccc_stress",
+        "action": "scale",
+        "value": 0.5,
+        "days": 1,
+        "priority": 90
+      },
+      {
+        "id": "ccc_above",
+        "action": "scale",
+        "value": 0.5,
+        "days": 1,
+        "priority": 80
+      }
+    ],
+    "start": "2007-01-03",
+    "end": "2026-10-22",
+    "financingAnnualRate": 0.05
+  },
+  "dgs30CSVHash": "f9c509f9646ee329f4f5437b43017275397cfb7d5df313f353696a058c5424ad",
+  "replay": {
+    "start": "2026-10-28",
+    "through": "2026-11-06",
+    "days": 8,
+    "sourceStrategyId": "custom-chao-1"
+  },
+  "inputHash": "31c87a992faa8b3bdf84f4191b1bcc5a563988ef2eec6e38632f76c694140669",
+  "backtestMetricsVerified": true,
+  "initialTarget": {
+    "configVersion": "185bb4fe5104599275309a9313dbfda3272edb901cc992c57d03cc280e3cea13",
+    "signalDate": "2026-11-05",
+    "weights": {
+      "TQQQ": 0.4213714858004238,
+      "BIL": 0.5786285141995762
+    },
+    "selection": "QQQ",
+    "state": "信用压力（分位≥95） · CCC压力位蓝点限制",
+    "reasons": [
+      "信用压力（分位≥95）：常态敞口 × 乘数 0.5。条件保持时生效；优先级 90。",
+      "选品方法 综合方法。 月度动量（2026-11-02）选 SOXX，QQQ 11.637392%，SOXX 27.594873%。 相对走弱（2026-11-02）21日 -15.220116%，63日 -11.114905%，本月锁定 QQQ。 DGS30 过滤关闭，2026-11-04 较 2026-05-06 变动 34 bp。 动量选品结果 QQQ。",
+      "黄点已于 2026-03-27 信号日解除：出现实心蓝点，永久解除本次黄点锁定。解除后执行其他有效规则或常态；未出现新黄点前不重新锁定。",
+      "同时生效：信用压力（分位≥95）（90）、利差高于200日线（80）；采用优先级最高者，同级按设置表顺序。",
+      "CCC压力位蓝点限制：CCC极端压力（252日分位≥95）成立；监测当日默认标的（常态底层）QQQ 的10日年化实现波动率 39.55338%（复权日收益样本标准差 × √252，含信号日）。多头上限 min(3, 50% / 39.55338%) = 1.264114×；本层前目标 1.5× → 最终目标 1.264114×。已限制最终多头，蓝点优先级也不能越过此上限。 压力解除即撤除此上限，目标回到其他规则结果，不等待账户净值修复；实际成交仍按次一交易日收盘及再平衡带执行。"
+    ],
+    "observedAt": "2026-11-09T14:27:55Z"
+  }
+}

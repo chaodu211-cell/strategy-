@@ -101,9 +101,8 @@
     if(migratedBearGate)status.textContent='原200日线清仓已改为拟合·进取熊市闸门：低于均线且均线较21日前下降时，仅限制常态多头，允许蓝点抄底。请重新生成回测。';
     if(migratedMomentum)status.textContent='旧动量设置已选用综合方法，可切换选品方法后重新生成回测。';
     form.addEventListener('input',dirty);form.addEventListener('change',dirty);
-    form.addEventListener('submit',async event=>{
-      event.preventDefault();if(busy||!form.reportValidity())return;
-      const settings=read();
+    async function generate(settings,registered=false){
+      if(busy)return;
       busy=true;button.disabled=true;form.setAttribute('aria-busy','true');status.classList.remove('error');status.textContent='正在读取每日行情并计算自定义回测…';
       // Freeze the submitted settings while input loading or calculation is in progress.
       const inputs=[...form.querySelectorAll('input,select,button')],previous=inputs.map(e=>e.disabled);inputs.forEach(e=>e.disabled=true);
@@ -113,22 +112,28 @@
         await new Promise(resolve=>setTimeout(resolve,0));
         const result=C.run(source,{
           ...settings,
-          start:source.meta.start,
-          end:source.meta.end
+          start:registered?settings.start:source.meta.start,
+          end:registered?settings.end:source.meta.end
         });
         lastResult=result;
-        let saved=true;try{localStorage.setItem(STORAGE,JSON.stringify(result.config));}catch{saved=false;}
+        let saved=true;
+        if(!registered)try{localStorage.setItem(STORAGE,JSON.stringify(result.config));}catch{saved=false;}
         $('#custom-stale').hidden=true;
         $('#export-custom-settings').disabled=false;$('#export-custom-daily').disabled=false;
         const a=result.audit;
         $('#custom-summary').hidden=false;
         $('#custom-summary').innerHTML=`<strong>${esc(result.config.name)}</strong><span>${result.range.start} — ${result.range.end} · ${a.days.toLocaleString()} 个交易日 · ${a.rebalanceDays} 次调仓</span><p>${a.limitedDays?`${a.limitedDays} 日的目标受当时可交易工具及100%资金权重限制，已按实际可实现敞口计算。`:'全部目标均可按所选工具及蓝点融资规则实现。'}${result.config.bearGateEnabled?` 熊市闸门条件命中 ${a.bearGateDays} 日，常态多头受限 ${a.bearGateAppliedDays} 日。`:''}${result.config.drawdownGateEnabled?` 回撤闸触发状态 ${a.drawdownGateDays} 日，常态多头减半 ${a.drawdownGateAppliedDays} 日。`:''}${result.config.cccStressBlueLimitEnabled?` CCC压力位蓝点限制已启用（10日波动率、跟随当日默认标的），降低最终多头目标 ${a.cccStressBlueLimitDays} 日。`:''}${a.syntheticDays?` 含 ${a.syntheticDays} 日合成ETF持仓。`:' 未持有合成ETF。'}${a.financingDays?` 融资持仓 ${a.financingDays} 日，年利率固定5%，累计利息相当于初始资金的 ${(a.financingInterestPaid*100).toFixed(2)}%。`:''}</p>`;
-        status.textContent=`回测已生成，可在图右上角切换查看周期。${saved?'设置已保存在本浏览器。':'本浏览器无法保存设置，可下载设置备份。'}`;
-        onResult(result,C.readings(source));
+        status.textContent=`回测已生成，可在图右上角切换查看周期。${registered?'本次采用当前登记参数。':saved?'设置已保存在本浏览器。':'本浏览器无法保存设置，可下载设置备份。'}`;
+        onResult(result,C.readings(source),registered);
         $('#history').scrollIntoView({behavior:'smooth',block:'start'});
-      }catch(e){status.textContent=(e.message||'回测未完成，请重试。')+(lastResult?' 本次未生成新回测，下方保留上次结果。':'');if(lastResult)$('#custom-stale').hidden=false;status.classList.add('error');}
+      }catch(e){status.textContent=(e.message||'回测未完成，请重试。')+(lastResult?' 本次未生成新回测，下方保留上次结果。':'');if(lastResult)$('#custom-stale').hidden=false;status.classList.add('error');if(registered)status.scrollIntoView({block:'center'});}
       finally{inputs.forEach((e,i)=>e.disabled=previous[i]);busy=false;button.disabled=false;form.removeAttribute('aria-busy');syncRows();}
+    }
+    form.addEventListener('submit',event=>{
+      event.preventDefault();
+      if(!busy&&form.reportValidity())generate(read());
     });
+    form.addEventListener('registered-backtest',event=>generate(event.detail,true));
     $('#reset-custom').addEventListener('click',()=>{write(C.defaults());dirty();});
     function download(name,text,type){const url=URL.createObjectURL(new Blob([text],{type})),a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
     $('#export-custom-settings').addEventListener('click',()=>{if(lastResult)download('自定义策略_设置.json',JSON.stringify({config:lastResult.config,inputHash:lastResult.audit.inputHash,metrics:lastResult.metrics,range:lastResult.range,audit:lastResult.audit},null,2),'application/json;charset=utf-8');});

@@ -43,7 +43,7 @@ momentumData.signals[170]|=1<<2;momentumData.signals[178]|=1<<7;
 assert.equal(target(momentumData,momentum,150).cccStressBlueLimit.monitorAsset,'SOXX');
 const switched=target(momentumData,momentum,178);assert.equal(switched.selection,'SOXX');assert.equal(switched.winner,'blue');assert.equal(switched.cccStressBlueLimit.monitorAsset,'QQQ','Monitoring follows ordinary momentum even while blue continues to hold SOXX');
 const ignoredMomentum=config();ignoredMomentum.asset='QQQ';ignoredMomentum.rules[2].asset='momentum';assert.equal(target(momentumData,ignoredMomentum,30).cccStressBlueLimit.monitorAsset,'QQQ','Ignored blue-only momentum cannot change the monitor');
-const real=JSON.parse(readFileSync(new URL('../public/custom-inputs.json',import.meta.url))),registered=JSON.parse(readFileSync(new URL('../tracking/config.json',import.meta.url))).custom;
+const real=JSON.parse(readFileSync(new URL('../public/custom-inputs.json',import.meta.url))),registered=JSON.parse(readFileSync(new URL('../tracking/state.json',import.meta.url))).strategies.find(s=>s.id==='custom-chao-1').configSnapshot;
 const realLegacy=C.run(real,registered),realOff=C.run(real,{...registered,cccStressBlueLimitEnabled:false});assert.deepEqual(realLegacy.history,realOff.history);
 const realOn=C.run(real,{...registered,cccStressBlueLimitEnabled:true});assert.ok(realOn.audit.cccStressBlueLimitDays>0);
 for(const p of Object.values(realOn.details.points)){const c=p.cccStressBlueLimit;assert.equal(c.monitorAsset,'QQQ','Registered ordinary QQQ stays the monitor with independent blue SOXX');if(c.active&&c.originalExposure>0)assert.ok(p.targetExposure<=Math.min(c.originalExposure,3,.5/c.volatility)+1e-10);}
