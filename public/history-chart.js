@@ -77,7 +77,7 @@
     }else reasons.push(base==='常态'?`常态配置：${detail.selection}，目标 ${x(detail.targetExposure)}。`:`生效规则：${base}。`);
     const blueMode=rules.find(r=>r.id==='blue')?.asset??'inherit';
     const usesMomentum=ladder?.selected?(blueMode==='momentum'||(blueMode==='inherit'&&config.asset==='momentum')):config.asset==='momentum';
-    if(usesMomentum&&detail.targetExposure>0)reasons[0]+=` 动量选中${detail.selection}。`;
+    if(usesMomentum&&detail.momentum)reasons.push(detail.momentum.reason);
     const yellow=detail.yellowLock;
     if(rule?.id==='yellow'&&yellow?.locked){
       const u=yellow.unlock||{},checks=[];

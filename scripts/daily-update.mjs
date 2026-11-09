@@ -7,6 +7,7 @@ import {loadRemoteSources} from '../worker/sources.js';
 import {calculateLive,rebaseSeed} from '../lib/live-engine.js';
 import {advanceLedger,queueTargets,publicLedger} from '../lib/forward-ledger.js';
 import {latestModels} from '../worker/index.js';
+import {extendDgs30} from './dgs30.mjs';
 import '../public/custom-backtest.js';
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'..'),C=globalThis.CustomBacktest;
 const read=async p=>JSON.parse(await readFile(resolve(root,p),'utf8'));
@@ -66,6 +67,11 @@ try{
     // Browser defaults can change without silently changing a running strategy version.
     const registered={...config.custom,rules:config.custom.rules.map(r=>r.id==='blue'?{...r,onlyIfNotLower:r.onlyIfNotLower??false}:r.id==='ccc_top'?{...r,stackWithCredit:r.stackWithCredit??false}:r.id==='yellow'?{...r,unlock:{...r.unlock,blueEnabled:r.unlock?.blueEnabled??false}}:r)};
     const custom=C.validate({...registered,end:panel.meta.end},panel),memory=C.RULES.map(()=>-1e9);let latest;
+    if(C.usesMomentum(custom)){
+      panel.dgs30=(await read('public/dgs30.json')).yieldsBp;
+      const warning=await extendDgs30(panel,extra);
+      if(warning)status.warnings.push(warning);
+    }
     for(let t=0;t<panel.dates.length;t++)latest=C.resolveTarget(panel,custom,t,memory);
     targets[config.customId||'custom-momentum']={configVersion:hash(config.custom),signalDate:panel.dates.at(-1),weights:Object.fromEntries(panel.symbols.map((s,j)=>[s.symbol,latest.weights[j]]).filter(([,w])=>w!==0)),selection:latest.selection,state:latest.state,reasons:latest.reasons};
     state=queueTargets(state,targets,new Date().toISOString());
