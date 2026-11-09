@@ -38,6 +38,7 @@ assert.deepEqual(C.run(future,config()).history.slice(0,40),run.history.slice(0,
 const missing=clone(data);missing.returns[25][2]=null;assert.throws(()=>C.run(missing,config()),/完整10个有效日收益/);
 const momentum=clone(blue),momentumData=clone(blueData);momentum.asset='momentum';momentum.rules[2].asset='SOXX';
 momentumData.returns=dates.map((_,i)=>{const q=.001,s=(i<156?.01:-.03)+(i%2?.004:-.004);return[q,3*q,s,3*s,-q,0];});
+momentumData.dgs30=Object.fromEntries(momentumData.dates.map(date=>[date,400]));   // flat yields: bond filter stays off
 momentumData.signals[170]|=1<<2;momentumData.signals[178]|=1<<7;
 assert.equal(target(momentumData,momentum,150).cccStressBlueLimit.monitorAsset,'SOXX');
 const switched=target(momentumData,momentum,178);assert.equal(switched.selection,'SOXX');assert.equal(switched.winner,'blue');assert.equal(switched.cccStressBlueLimit.monitorAsset,'QQQ','Monitoring follows ordinary momentum even while blue continues to hold SOXX');

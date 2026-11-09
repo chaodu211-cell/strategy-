@@ -3,6 +3,7 @@ import '../public/custom-backtest.js';
 const C=globalThis.CustomBacktest;
 const dates=Array.from({length:250},(_,i)=>new Date(Date.UTC(2007,0,3+i)).toISOString().slice(0,10));
 const data={schemaVersion:1,meta:{start:dates[0],end:dates.at(-1)},signalTypes:C.RULES.map(r=>r.id),dates,symbols:[{symbol:'QQQ',underlying:'QQQ',leverage:1},{symbol:'TQQQ',underlying:'QQQ',leverage:3},{symbol:'SOXX',underlying:'SOXX',leverage:1},{symbol:'SOXL',underlying:'SOXX',leverage:3},{symbol:'BIL',underlying:'BIL',leverage:0}],returns:dates.map(()=>[.001,.003,.002,.006,0]),costs:dates.map(()=>[0,0,0,0,0]),tradable:dates.map(()=>31),signals:dates.map(()=>0)};
+data.dgs30=Object.fromEntries(dates.map(date=>[date,400]));   // flat yields: bond filter stays off
 data.signals[180]=1<<2;
 function config(asset){const c=C.defaults();c.start=dates[1];c.end=dates.at(-1);c.asset='SOXX';c.baseExposure=1;c.costMultiplier=0;c.band=0;for(const r of c.rules)r.action='ignore';Object.assign(c.rules[2],{action:'blue_ladder',value:2,steps:1,asset});return c;}
 const fixed=C.run(data,config('QQQ'));

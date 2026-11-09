@@ -278,18 +278,26 @@
         m.through=data.dates[end];
       }
     }
-    // At a weekly check, use the selection entering the session, before today's bond update.
-    if(m.monthlySelection==='SOXX'&&(monthStart||(m.selection==='SOXX'&&weekStart(date)!==weekStart(previous)))){
-      const change=days=>grossReturn(data,'SOXX',t-days,t)/grossReturn(data,'QQQ',t-days,t)-1;
-      const shortChange=change(weakness.short),longChange=change(weakness.long);
-      m.weakness={date,check:monthStart?'month':'week',shortChange,longChange,locked:shortChange<0&&longChange<0};
-    }
+    // The bond layer uses only t-1 and earlier yields, so it is resolved before the weakness check.
+    if(!data.dgs30||typeof data.dgs30!=='object')throw new Error('动量选品缺少 FRED DGS30 收益率数据，不能静默关闭长债过滤。');
     const observationDate=data.dates[t-longBond.lag]??null;
     const baselineDate=data.dates[t-longBond.lag-longBond.lookback]??null;
-    const observed=data.dgs30?.[observationDate],baseline=data.dgs30?.[baselineDate];
+    // null = checked and unavailable (state carries forward); an absent key means the input was never supplied.
+    for(const d of [observationDate,baselineDate])if(d!==null&&!Object.hasOwn(data.dgs30,d))throw new Error(`动量选品缺少 ${d} 的 DGS30 收益率输入。`);
+    const observed=observationDate===null?null:data.dgs30[observationDate],baseline=baselineDate===null?null:data.dgs30[baselineDate];
     const deltaBp=Number.isInteger(observed)&&Number.isInteger(baseline)?observed-baseline:null;
-    const active=deltaBp===null?m.bond?.active??false:deltaBp>=(m.bond?.active?longBond.offBelowBp:longBond.onBp);
+    const wasActive=m.bond?.active??false;
+    const active=deltaBp===null?wasActive:deltaBp>=(wasActive?longBond.offBelowBp:longBond.onBp);
     m.bond={active,deltaBp,observationDate,baselineDate};
+    // Check relative weakness at the month start, at a weekly check of an incoming SOXX selection,
+    // and on the day the bond filter releases, so SOXX is never bought back without a weakness check.
+    const weekCheck=!monthStart&&m.selection==='SOXX'&&weekStart(date)!==weekStart(previous);
+    const released=!monthStart&&wasActive&&!active&&!m.weakness?.locked;
+    if(m.monthlySelection==='SOXX'&&(monthStart||weekCheck||released)){
+      const change=days=>grossReturn(data,'SOXX',t-days,t)/grossReturn(data,'QQQ',t-days,t)-1;
+      const shortChange=change(weakness.short),longChange=change(weakness.long);
+      m.weakness={date,check:monthStart?'month':released?'bond_release':'week',shortChange,longChange,locked:shortChange<0&&longChange<0};
+    }
     m.selection=m.monthlySelection==='SOXX'&&!m.weakness?.locked&&!active?'SOXX':'QQQ';
     const monthly=m.scores?`月度动量（${m.decisionDate}）选 ${m.monthlySelection}，QQQ ${number(m.scores.QQQ*100)}%，SOXX ${number(m.scores.SOXX*100)}%`:'月度动量等待完整观察期';
     const relative=m.weakness?`相对走弱（${m.weakness.date}）21日 ${number(m.weakness.shortChange*100)}%，63日 ${number(m.weakness.longChange*100)}%，${m.weakness.locked?'本月锁定 QQQ':'未触发'}`:'相对走弱未触发';

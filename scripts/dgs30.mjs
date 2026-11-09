@@ -66,19 +66,27 @@ export async function fetchDgs30(first,last){
 
 export async function extendDgs30(panel,rows,fetchCsv=fetchDgs30){
   const lagDates=panel.dates.slice(panel.dates.length-rows.length-1,-1);
-  const needed=lagDates.filter((date,i)=>!Object.hasOwn(panel.dgs30,date)&&!Object.hasOwn(rows[i],'dgs30LagBp'));
-  let fresh={},warning=null;
+  const stored=row=>Number.isInteger(row.dgs30LagBp);
+  const needed=lagDates.filter((date,i)=>!Object.hasOwn(panel.dgs30,date)&&!stored(rows[i]));
+  let fresh={},failed=false;
   if(needed.length){
     try{fresh=alignDgs30(needed,parseDgs30(await fetchCsv(needed[0],needed.at(-1))));}
-    catch{warning='FRED DGS30 暂不可用，缺值日期延续前一日的长债过滤状态。';}
+    catch{failed=true;}
   }
+  const pending=[];
   for(const [i,row] of rows.entries()){
     const date=lagDates[i];
-    // Keep the lagged observation used for each signal, including missing values.
-    if(!Object.hasOwn(row,'dgs30LagBp'))row.dgs30LagBp=Object.hasOwn(panel.dgs30,date)?panel.dgs30[date]:fresh[date]??null;
-    panel.dgs30[date]=row.dgs30LagBp;
+    if(stored(row)){panel.dgs30[date]=row.dgs30LagBp;continue;}
+    delete row.dgs30LagBp;   // legacy null from an earlier run: retry
+    const value=Object.hasOwn(panel.dgs30,date)?panel.dgs30[date]:fresh[date]??null;
+    // Persist only published observations (or Fed-holiday carry-forwards). An unpublished or
+    // unreachable value is used as missing for this run and fetched again on the next run.
+    if(Number.isInteger(value))row.dgs30LagBp=value;
+    else pending.push(date);
+    panel.dgs30[date]=value;
   }
-  return warning;
+  if(!pending.length)return null;
+  return `FRED DGS30 ${failed?'暂不可用':'尚未发布'}：${pending.join('、')} 本次按缺值处理并延续前一日长债过滤状态，下次运行重新获取。`;
 }
 
 if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url)){
