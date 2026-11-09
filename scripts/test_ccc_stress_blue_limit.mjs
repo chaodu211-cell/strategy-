@@ -2,9 +2,9 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import '../public/custom-backtest.js';
 const C=globalThis.CustomBacktest,clone=structuredClone;
-const dates=Array.from({length:100},(_,i)=>new Date(Date.UTC(2007,0,3+i)).toISOString().slice(0,10));
+const dates=Array.from({length:240},(_,i)=>new Date(Date.UTC(2007,0,3+i)).toISOString().slice(0,10));
 const data={schemaVersion:1,meta:{start:dates[0],end:dates.at(-1)},signalTypes:C.RULES.map(r=>r.id),dates,symbols:[{symbol:'QQQ',underlying:'QQQ',leverage:1},{symbol:'TQQQ',underlying:'QQQ',leverage:3},{symbol:'SOXX',underlying:'SOXX',leverage:1},{symbol:'SOXL',underlying:'SOXX',leverage:3},{symbol:'PSQ',underlying:'QQQ',leverage:-1},{symbol:'BIL',underlying:'BIL',leverage:0}],returns:dates.map((_,i)=>{const q=(i%2?1:-1)*.005-.001,s=(i%2?1:-1)*.04-.005;return[q,3*q,s,3*s,-q,0];}),costs:dates.map(()=>[0,0,0,0,0,0]),tradable:dates.map(()=>63),signals:dates.map((_,i)=>i>=30&&i<=40?(1<<7)|(1<<8):0)};
-function config(){const c=C.defaults();c.start=dates[20];c.end=dates.at(-1);c.asset='SOXX';c.baseExposure=3;c.costMultiplier=0;c.band=0;c.cccStressBlueLimitEnabled=true;for(const r of c.rules)r.action='ignore';c.rules[2].asset='QQQ';c.momentum={lookback:22,skip:0,frequency:'daily',buffer:0};return c;}
+function config(){const c=C.defaults();c.start=dates[20];c.end=dates.at(-1);c.asset='SOXX';c.baseExposure=3;c.costMultiplier=0;c.band=0;c.cccStressBlueLimitEnabled=true;for(const r of c.rules)r.action='ignore';c.rules[2].asset='QQQ';return c;}
 function target(d,c,t){const last=C.RULES.map(()=>-1e9);let p;for(let i=0;i<=t;i++)p=C.resolveTarget(d,C.validate(c,d),i,last);return p;}
 const near=(a,b,msg)=>assert.ok(Math.abs(a-b)<1e-11,msg??`${a} != ${b}`);
 const sigma=(d,t,j)=>{const a=d.returns.slice(t-9,t+1).map(r=>r[j]),m=a.reduce((s,v)=>s+v,0)/10;return Math.sqrt(a.reduce((s,v)=>s+(v-m)**2,0)/9)*Math.sqrt(252);};
@@ -37,9 +37,11 @@ const future=clone(data);future.returns[60]=[1,3,-.5,-.9,-1,0];future.signals[60
 assert.deepEqual(C.run(future,config()).history.slice(0,40),run.history.slice(0,40),'Future inputs cannot change earlier results');
 const missing=clone(data);missing.returns[25][2]=null;assert.throws(()=>C.run(missing,config()),/完整10个有效日收益/);
 const momentum=clone(blue),momentumData=clone(blueData);momentum.asset='momentum';momentum.rules[2].asset='SOXX';
-momentumData.returns=dates.map((_,i)=>{const q=i<50?.001:-.002,s=(i<50?.01:-.02)+(i%2?.004:-.004);return[q,3*q,s,3*s,-q,0];});momentumData.signals[70]|=1<<2;momentumData.signals[80]|=1<<7;
-assert.equal(target(momentumData,momentum,30).cccStressBlueLimit.monitorAsset,'SOXX');
-const switched=target(momentumData,momentum,80);assert.equal(switched.selection,'SOXX');assert.equal(switched.winner,'blue');assert.equal(switched.cccStressBlueLimit.monitorAsset,'QQQ','Monitoring follows ordinary momentum even while blue continues to hold SOXX');
+momentumData.returns=dates.map((_,i)=>{const q=.001,s=(i<156?.01:-.03)+(i%2?.004:-.004);return[q,3*q,s,3*s,-q,0];});
+momentumData.dgs30=Object.fromEntries(momentumData.dates.map(date=>[date,400]));   // flat yields: bond filter stays off
+momentumData.signals[170]|=1<<2;momentumData.signals[178]|=1<<7;
+assert.equal(target(momentumData,momentum,150).cccStressBlueLimit.monitorAsset,'SOXX');
+const switched=target(momentumData,momentum,178);assert.equal(switched.selection,'SOXX');assert.equal(switched.winner,'blue');assert.equal(switched.cccStressBlueLimit.monitorAsset,'QQQ','Monitoring follows ordinary momentum even while blue continues to hold SOXX');
 const ignoredMomentum=config();ignoredMomentum.asset='QQQ';ignoredMomentum.rules[2].asset='momentum';assert.equal(target(momentumData,ignoredMomentum,30).cccStressBlueLimit.monitorAsset,'QQQ','Ignored blue-only momentum cannot change the monitor');
 const real=JSON.parse(readFileSync(new URL('../public/custom-inputs.json',import.meta.url))),registered=JSON.parse(readFileSync(new URL('../tracking/config.json',import.meta.url))).custom;
 const realLegacy=C.run(real,registered),realOff=C.run(real,{...registered,cccStressBlueLimitEnabled:false});assert.deepEqual(realLegacy.history,realOff.history);

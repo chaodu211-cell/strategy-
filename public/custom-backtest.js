@@ -19,7 +19,16 @@
   const FINANCING_RATE=.05;
   const DATE=/^\d{4}-\d{2}-\d{2}$/;
   const yellowDefaults=()=>({tdcEnabled:true,tdcThreshold:60,priceEnabled:true,repairPct:3,blueEnabled:true});
-  const momentumDefaults=()=>({lookback:126,skip:21,frequency:'monthly',buffer:0});
+  const MOMENTUM={
+    lookback:126,skip:21,frequency:'monthly',buffer:0,
+    weakness:{short:21,long:63,frequency:'weekly'},
+    longBond:{series:'DGS30',lag:1,lookback:126,onBp:50,offBelowBp:40}
+  };
+  const momentumDefaults=()=>copy(MOMENTUM);
+  function usesMomentum(cfg){
+    const blue=cfg.rules[2];
+    return cfg.asset==='momentum'||(blue.action==='blue_ladder'&&blue.asset==='momentum');
+  }
   function defaults(){return {schemaVersion:1,name:'我的双模型策略',start:'2016-10-21',end:'2026-10-22',asset:'QQQ',bearGateEnabled:false,drawdownGateEnabled:false,cccStressBlueLimitEnabled:false,momentum:momentumDefaults(),baseExposure:1,allowSynthetic:false,band:.05,costMultiplier:1,financingAnnualRate:FINANCING_RATE,rules:RULES.map(r=>({id:r.id,action:r.action,value:r.value,...(r.conditional?{unlock:yellowDefaults()}:{days:r.days}),priority:r.priority,...(r.id==='ccc_top'?{stackWithCredit:true}:{}),...(r.id==='blue'?{steps:r.steps,onlyIfNotLower:true,asset:'inherit'}:{})}))};}
   function validate(input,data){
     if(!input||input.schemaVersion!==1)throw new Error('自定义设置版本无效。');
@@ -37,9 +46,6 @@
     if(c.start>c.end||c.start<(data?.meta.start||'2007-01-03')||c.end>(data?.meta.end||'2026-10-22'))throw new Error(`回测日期须在 ${data?.meta.start||'2007-01-03'} 至 ${data?.meta.end||'2026-10-22'} 之间，且结束日不早于开始日。`);
     if(!['QQQ','SOXX','momentum'].includes(c.asset)||typeof c.allowSynthetic!=='boolean')throw new Error('常态底层设置无效。');
     const bound=(x,min,max,label,integer=false)=>{if(typeof x!=='number'||!Number.isFinite(x)||x<min||x>max||(integer&&!Number.isInteger(x)))throw new Error(`${label}须为 ${min}–${max}${integer?' 的整数':' 之间的数值'}。`);};
-    c.momentum={...momentumDefaults(),...c.momentum};
-    bound(c.momentum.lookback,22,504,'动量观察期',true);bound(c.momentum.skip,0,c.momentum.lookback-1,'剔除最近交易日',true);bound(c.momentum.buffer,0,1,'换品缓冲');
-    if(!['daily','weekly','monthly'].includes(c.momentum.frequency))throw new Error('动量换品频率无效。');
     bound(c.baseExposure,0,3,'常态敞口');bound(c.band,0,.25,'再平衡带');bound(c.costMultiplier,0,5,'成本倍数');
     if(!Array.isArray(c.rules)||c.rules.length!==RULES.length||new Set(c.rules.map(r=>r.id)).size!==RULES.length)throw new Error('每个预警须有且仅有一条设置。');
     c.rules=RULES.map(r=>{
@@ -66,6 +72,7 @@
       }
       return{id:r.id,action:rule.action,value:rule.value,...(r.conditional?{unlock}:{days:rule.action==='blue_ladder'?40:rule.days}),priority:rule.priority,...(r.id==='ccc_top'?{stackWithCredit}:{}),...(r.id==='blue'?{steps,onlyIfNotLower,asset}:{})};
     });
+    if(usesMomentum(c)||c.momentum===undefined)c.momentum=momentumDefaults();
     return c;
   }
   function resolveTarget(data,cfg,t,last){
@@ -88,7 +95,7 @@
     const yellowLock={locked:memory.locked,triggerDate:memory.triggerIndex===null?null:data.dates[memory.triggerIndex],releaseDate:memory.releaseIndex===null?null:data.dates[memory.releaseIndex],releaseReason:memory.releaseReason,tdc:finite(tdc)?tdc:null,qqqDrawdown52:finite(dd52)?dd52:null,unlock:{...unlock}};
     const active=RULES.map((r,i)=>({...cfg.rules[i],label:r.label,index:i,sourceIndex:last[i],state:!!r.state,active:r.conditional?memory.locked:r.state?!!(mask&(1<<i)):t-last[i]<(cfg.rules[i].action==='blue_ladder'?40:cfg.rules[i].days)})).filter(r=>r.active&&r.action!=='ignore').sort((a,b)=>b.priority-a.priority||a.index-b.index);
     const blueAsset=cfg.rules[2].asset??'inherit';
-    const momentum=cfg.asset==='momentum'||(cfg.rules[2].action==='blue_ladder'&&blueAsset==='momentum')?momentumChoice(data,cfg.momentum,t,last):null;
+    const momentum=usesMomentum(cfg)?momentumChoice(data,t,last):null;
     const defaultAsset=cfg.asset==='momentum'?momentum.selection:cfg.asset;
     let desired=cfg.baseExposure,selection=defaultAsset,blueLadder=null;
     const ladder=active.find(r=>r.action==='blue_ladder');
@@ -238,19 +245,64 @@
     const below=priceToMA<1-1e-12,maFalling=maToPastMA<1-1e-12;
     return{asset:'QQQ',period,slopeLookback,date:data.dates[t],ready:true,count:required,priceToMA,maToPastMA,below,maFalling,active:below&&maFalling,multiplier:0};
   }
-  function momentumChoice(data,params,t,memory){
-    const p={...momentumDefaults(),...params},date=data.dates[t],previous=data.dates[t-1];
-    const week=d=>{const x=new Date(d+'T00:00:00Z');x.setUTCDate(x.getUTCDate()-(x.getUTCDay()+6)%7);return x.toISOString().slice(0,10);};
-    const due=p.frequency==='daily'||!previous||(p.frequency==='monthly'?date.slice(0,7)!==previous.slice(0,7):week(date)!==week(previous));
-    let m=memory.momentum||{selection:'QQQ',decisionDate:null,scores:null};
-    if(t>=p.lookback&&(due||!m.decisionDate)){
-      const scores=Object.fromEntries(['QQQ','SOXX'].map(s=>{const j=data.symbols.findIndex(x=>x.symbol===s);if(j<0)throw new Error('动量选品缺少 '+s);let growth=1;for(let i=t-p.lookback+1;i<=t-p.skip;i++){const r=data.returns[i]?.[j];if(!Number.isFinite(r)||r<=-1)throw new Error('动量选品收益缺失 '+data.dates[i]);growth*=1+r;}return[s,growth-1];}));
-      const challenger=m.selection==='QQQ'?'SOXX':'QQQ';
-      let selection=m.decisionDate?m.selection:(scores.SOXX>scores.QQQ?'SOXX':'QQQ');
-      if(m.decisionDate&&scores[challenger]>scores[m.selection]+p.buffer)selection=challenger;
-      m={selection,decisionDate:date,scores,from:data.dates[t-p.lookback],through:data.dates[t-p.skip]};memory.momentum=m;
+  function grossReturn(data,symbol,start,end){
+    const j=data.symbols.findIndex(s=>s.symbol===symbol);
+    if(j<0)throw new Error('动量选品缺少 '+symbol);
+    let growth=1;
+    for(let i=start+1;i<=end;i++){
+      const r=data.returns[i]?.[j];
+      if(!Number.isFinite(r)||r<=-1)throw new Error('动量选品收益缺失 '+data.dates[i]);
+      growth*=1+r;
     }
-    return{...copy(m),reason:m.decisionDate?`动量选品：${m.decisionDate} 比较 ${m.from} 至 ${m.through} 的复权收益（观察${p.lookback}日，剔除最近${p.skip}日）；QQQ ${number(m.scores.QQQ*100)}%，SOXX ${number(m.scores.SOXX*100)}%，换品缓冲 ${number(p.buffer*100)} 个百分点，选中 ${m.selection}，按${{daily:'每日',weekly:'每周首个交易日',monthly:'每月首个交易日'}[p.frequency]}复查。需要动量的常态或蓝点分批配置使用此选品结果。`:'动量观察期不足，暂用QQQ；积累完整观察期后才能比较。'};
+    return growth;
+  }
+  function weekStart(date){
+    const day=new Date(date+'T00:00:00Z');
+    return +day-((day.getUTCDay()+6)%7)*86400000;
+  }
+  function momentumChoice(data,t,memory){
+    const {lookback,skip,weakness,longBond}=MOMENTUM;
+    const date=data.dates[t],previous=data.dates[t-1];
+    const monthStart=!previous||date.slice(0,7)!==previous.slice(0,7);
+    const m=memory.momentum??={monthlySelection:'QQQ',selection:'QQQ',decisionDate:null,scores:null,weakness:null,bond:null};
+    if(monthStart){
+      m.weakness=null;
+      if(t>=lookback){
+        const start=t-lookback,end=t-skip;
+        const qqq=grossReturn(data,'QQQ',start,end),soxx=grossReturn(data,'SOXX',start,end);
+        if(soxx>qqq)m.monthlySelection='SOXX';
+        if(qqq>soxx)m.monthlySelection='QQQ';
+        m.scores={QQQ:qqq-1,SOXX:soxx-1};
+        m.decisionDate=date;
+        m.from=data.dates[start];
+        m.through=data.dates[end];
+      }
+    }
+    // The bond layer uses only t-1 and earlier yields, so it is resolved before the weakness check.
+    if(!data.dgs30||typeof data.dgs30!=='object')throw new Error('动量选品缺少 FRED DGS30 收益率数据，不能静默关闭长债过滤。');
+    const observationDate=data.dates[t-longBond.lag]??null;
+    const baselineDate=data.dates[t-longBond.lag-longBond.lookback]??null;
+    // null = checked and unavailable (state carries forward); an absent key means the input was never supplied.
+    for(const d of [observationDate,baselineDate])if(d!==null&&!Object.hasOwn(data.dgs30,d))throw new Error(`动量选品缺少 ${d} 的 DGS30 收益率输入。`);
+    const observed=observationDate===null?null:data.dgs30[observationDate],baseline=baselineDate===null?null:data.dgs30[baselineDate];
+    const deltaBp=Number.isInteger(observed)&&Number.isInteger(baseline)?observed-baseline:null;
+    const wasActive=m.bond?.active??false;
+    const active=deltaBp===null?wasActive:deltaBp>=(wasActive?longBond.offBelowBp:longBond.onBp);
+    m.bond={active,deltaBp,observationDate,baselineDate};
+    // Check relative weakness at the month start, at a weekly check of an incoming SOXX selection,
+    // and on the day the bond filter releases, so SOXX is never bought back without a weakness check.
+    const weekCheck=!monthStart&&m.selection==='SOXX'&&weekStart(date)!==weekStart(previous);
+    const released=!monthStart&&wasActive&&!active&&!m.weakness?.locked;
+    if(m.monthlySelection==='SOXX'&&(monthStart||weekCheck||released)){
+      const change=days=>grossReturn(data,'SOXX',t-days,t)/grossReturn(data,'QQQ',t-days,t)-1;
+      const shortChange=change(weakness.short),longChange=change(weakness.long);
+      m.weakness={date,check:monthStart?'month':released?'bond_release':'week',shortChange,longChange,locked:shortChange<0&&longChange<0};
+    }
+    m.selection=m.monthlySelection==='SOXX'&&!m.weakness?.locked&&!active?'SOXX':'QQQ';
+    const monthly=m.scores?`月度动量（${m.decisionDate}）选 ${m.monthlySelection}，QQQ ${number(m.scores.QQQ*100)}%，SOXX ${number(m.scores.SOXX*100)}%`:'月度动量等待完整观察期';
+    const relative=m.weakness?`相对走弱（${m.weakness.date}）21日 ${number(m.weakness.shortChange*100)}%，63日 ${number(m.weakness.longChange*100)}%，${m.weakness.locked?'本月锁定 QQQ':'未触发'}`:'相对走弱未触发';
+    const bond=`DGS30 过滤${active?'开启':'关闭'}，${deltaBp===null?'缺少所需观测值，沿用状态':`${observationDate} 较 ${baselineDate} 变动 ${deltaBp} bp`}`;
+    return{...m,reason:`${monthly}。 ${relative}。 ${bond}。 动量选品结果 ${m.selection}。`};
   }
   function stats(history,turnover){
     const years=(Date.parse(history.at(-1).date)-Date.parse(history[0].date))/86400000/365.25;
@@ -307,12 +359,12 @@
       if(weights.some((w,j)=>w>1e-9&&data.symbols[j].synthetic))syntheticDays++;
       if(t===start)reasons.push('窗口首日收盘继承前一交易日目标，净值从1起算；首日不虚构成交，下一交易日起计收益和成本。');
       if(rebalanced&&rebalanceOnly)reasons.push(`目标不变，实际资金权重偏离超过 ${number(cfg.band*100)} 个百分点，按自定义再平衡带调仓。`);
-      points[date]={signalDate:data.dates[t-1],state:target.state,selection:target.selection,holdings:weights.flatMap((w,j)=>j!==bil&&w>1e-9?[[data.symbols[j].symbol,w]]:[]),cash:weights[bil],exposure,targetHoldings:target.weights.flatMap((w,j)=>j!==bil&&w>1e-9?[[data.symbols[j].symbol,w]]:[]),targetCash:target.weights[bil],targetExposure:target.exposure,rebalanced,reasons,nav,benchmarkNav,band:cfg.band,rebalanceOnly,blueLadder:target.blueLadder,blueComparison:target.blueComparison,creditStack:target.creditStack,bearGate:target.bearGate,drawdownGate:target.drawdownGate,cccStressBlueLimit:target.cccStressBlueLimit,yellowLock:target.yellowLock,financingInterest,financingAnnualRate:FINANCING_RATE};
+      points[date]={signalDate:data.dates[t-1],state:target.state,selection:target.selection,holdings:weights.flatMap((w,j)=>j!==bil&&w>1e-9?[[data.symbols[j].symbol,w]]:[]),cash:weights[bil],exposure,targetHoldings:target.weights.flatMap((w,j)=>j!==bil&&w>1e-9?[[data.symbols[j].symbol,w]]:[]),targetCash:target.weights[bil],targetExposure:target.exposure,rebalanced,reasons,nav,benchmarkNav,band:cfg.band,rebalanceOnly,momentum:target.momentum,blueLadder:target.blueLadder,blueComparison:target.blueComparison,creditStack:target.creditStack,bearGate:target.bearGate,drawdownGate:target.drawdownGate,cccStressBlueLimit:target.cccStressBlueLimit,yellowLock:target.yellowLock,financingInterest,financingAnnualRate:FINANCING_RATE};
       history.push({date,nav});benchmark.push({date,nav:benchmarkNav});turnover.push(turn);
     }
     const metrics=stats(history,turnover),benchmarkMetrics=stats(benchmark,turnover.map(()=>0));
-    return{config:cfg,range:{start:data.dates[start],end:data.dates[end]},history,benchmark,metrics,benchmarkMetrics,details:{points,trades},audit:{inputHash:data.meta.inputHash,days:history.length,bearGateDays,bearGateAppliedDays,drawdownGateDays,drawdownGateAppliedDays,cccStressBlueLimitDays,limitedDays,syntheticDays,rebalanceDays,costPaid,financingDays,financingInterestPaid,financingAnnualRate:FINANCING_RATE},sourceMeta:copy(data.meta)};
+    return{config:cfg,range:{start:data.dates[start],end:data.dates[end]},history,benchmark,metrics,benchmarkMetrics,details:{points,trades},audit:{inputHash:data.meta.inputHash,...(data.meta.dgs30CSVHash?{dgs30CSVHash:data.meta.dgs30CSVHash}:{}),days:history.length,bearGateDays,bearGateAppliedDays,drawdownGateDays,drawdownGateAppliedDays,cccStressBlueLimitDays,limitedDays,syntheticDays,rebalanceDays,costPaid,financingDays,financingInterestPaid,financingAnnualRate:FINANCING_RATE},sourceMeta:copy(data.meta)};
   }
   function readings(data){return Object.fromEntries(data.dates.map((d,i)=>{const v=data.readings[i],mask=data.signals[i];return[d,{temperature:v[0],tdc:v[1],creditSpread:v[2],creditMA200:v[3],creditPercentile:v[4],creditSourceDate:v[5],creditStress:!!(mask&(1<<7)),creditAbove:!!(mask&(1<<8))}];}));}
-  root.CustomBacktest=Object.freeze({RULES,ACTIONS,defaults,validate,resolveTarget,bearGate200,momentumChoice,stats,run,readings});
+  root.CustomBacktest=Object.freeze({RULES,ACTIONS,defaults,validate,usesMomentum,resolveTarget,bearGate200,momentumChoice,stats,run,readings});
 })(typeof window!=='undefined'?window:globalThis);
