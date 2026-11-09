@@ -45,6 +45,11 @@ patch('  function stressBlueLimit(data,t,monitorAsset,originalExposure){', `  fu
     if(R.kind==='dd'){const v=data.yellowContext.qqqDrawdown52[t];return typeof v==='number'&&v<=-R.depth;}
     return false;}
   function stressBlueLimit(data,t,monitorAsset,originalExposure){`);
+// Bear cap that overrides the not-lower comparison: (a) inside blue windows only; (b) final cap on every long.
+patch('const eligible=blueExposure+1e-12*Math.max(1,Math.abs(blueExposure),Math.abs(baselineExposure))>=baselineExposure;',
+  'const eligible=(cfg.research?.bearForceBlue&&bearGate200(data,t).active)||blueExposure+1e-12*Math.max(1,Math.abs(blueExposure),Math.abs(baselineExposure))>=baselineExposure;');
+patch('    const action=winner?`${winner.label}', `    if(cfg.research?.bearCapAll!==undefined&&exposure>cfg.research.bearCapAll+1e-12&&bearGate200(data,t).active){const ratio=cfg.research.bearCapAll/exposure;for(let j=0;j<weights.length;j++)if(j!==bil)weights[j]*=ratio;weights[bil]=1-sum(weights.filter((_,j)=>j!==bil));exposure=cfg.research.bearCapAll;}
+    const action=winner?\`\${winner.label}`);
 const context = vm.createContext({});
 vm.runInContext(src, context);
 const R = context.CustomBacktest;
@@ -156,6 +161,24 @@ log(`\n### 蓝点 x 的邻居与常态杠杆刻度\n\n${HEADER}`);
 for (const [name, e] of dialRuns) log(row(name, e));
 log('\n### 全样本分块重抽样（2007-2026 日收益，63 日块，1 万条 10 年路径）\n\n| 变体 | 融资天数 | 年换手 | 年化中位（较差 10%） | 回撤中位 | 较坏 10% 回撤 | 回撤超 40% | 回撤超 50% |\n|---|---|---|---|---|---|---|---|');
 for (const [name, e] of dialRuns) { const b = bootstrap(e.s.nav); log(`| ${name} | ${e.r.audit.financingDays} | ${e.r.metrics.turn_yr.toFixed(1)} | ${p1(b.c50)}%（${p1(b.c10)}%） | ${p1(b.m50)}% | ${p1(b.m10)}% | ${p1(b.p40)}% | ${p1(b.p50)}% |`); }
+
+// ---- 5b. bear cap with priority over the not-lower comparison (follow-up question) ----------------
+{
+  const a = L => c => research(c, {blueBearCap: L, bearForceBlue: true});
+  const list = [['现状（x=4）', c => {}], ['x=3', x3],
+    ['(a) x=4，熊市蓝点 ≤1 倍且跳过比较', a(1)], ['(a) x=3，L=1', c => { x3(c); a(1)(c); }], ['(a) x=3，L=0.5', c => { x3(c); a(.5)(c); }], ['(a) x=3，L=1.5', c => { x3(c); a(1.5)(c); }],
+    ['(b) x=4，熊市最终上限 1 倍', c => research(c, {bearCapAll: 1})], ['(b) x=4，熊市最终上限 0.5 倍', c => research(c, {bearCapAll: .5})], ['(b) x=4，熊市最终上限 1.5 倍', c => research(c, {bearCapAll: 1.5})],
+    ['(b) x=3，熊市最终上限 1 倍', c => { x3(c); research(c, {bearCapAll: 1}); }]];
+  log(`\n### 熊市上限优先于「不低于常态」比较（追问）\n\n(a) 熊市闸门亮时蓝点 ≤ L 且跳过比较、按优先级执行；(b) 熊市闸门亮时所有最终多头 ≤ L（最后一层封顶）。\n\n${HEADER.replace(' |\n|', ' | 重抽样超 40% / 超 50% |\n|')}---|`);
+  const runs = [];
+  for (const [name, f] of list) { const e = variant(f), b = bootstrap(e.s.nav); runs.push([name, e]); log(`${row(name, e)} ${p1(b.p40)}% / ${p1(b.p50)}% |`); }
+  const pick = ['现状（x=4）', 'x=3', '(a) x=4，熊市蓝点 ≤1 倍且跳过比较', '(a) x=3，L=1'].map(n => runs.find(r => r[0] === n)), ds = pick[0][1].s.dates;
+  log(`\n| 年份 | ${pick.map(r => r[0]).join(' | ')} |\n|---|${pick.map(() => '---').join('|')}|`);
+  for (const y of ['2008', '2009', '2018', '2019', '2022', '2025']) {
+    const i = Math.max(0, ds.findLastIndex(d => d < y)), j = ds.findLastIndex(d => d.slice(0, 4) === y);
+    log(`| ${y} | ${pick.map(([, e]) => `${((e.s.nav[j] / e.s.nav[i] - 1) * 100).toFixed(0)}%`).join(' | ')} |`);
+  }
+}
 
 // ---- 6. the registered, forward-tracked version --------------------------------------------------
 {
