@@ -1,0 +1,120 @@
+{
+  "note": "用户导出的 Chao#1 设置（2026-11-09 上传，尚未登记）；仅用于复现与研究。",
+  "config": {
+    "schemaVersion": 1,
+    "name": "Chao#1",
+    "asset": "momentum",
+    "bearGateEnabled": false,
+    "drawdownGateEnabled": false,
+    "cccStressBlueLimitEnabled": true,
+    "baseExposure": 3,
+    "band": 0.25,
+    "costMultiplier": 1,
+    "allowSynthetic": true,
+    "rules": [
+      {
+        "id": "red",
+        "action": "flat",
+        "value": 0,
+        "days": 30,
+        "priority": 99
+      },
+      {
+        "id": "red_ad",
+        "action": "flat",
+        "value": 0,
+        "days": 30,
+        "priority": 98
+      },
+      {
+        "id": "blue",
+        "action": "blue_ladder",
+        "value": 4,
+        "days": 40,
+        "priority": 95,
+        "steps": 10,
+        "onlyIfNotLower": true,
+        "asset": "inherit"
+      },
+      {
+        "id": "blue_soft",
+        "action": "ignore",
+        "value": 1,
+        "days": 20,
+        "priority": 20
+      },
+      {
+        "id": "yellow",
+        "action": "flat",
+        "value": 0,
+        "unlock": {
+          "tdcEnabled": true,
+          "tdcThreshold": 60,
+          "priceEnabled": true,
+          "repairPct": 3,
+          "blueEnabled": true
+        },
+        "priority": 94
+      },
+      {
+        "id": "ccc_top",
+        "action": "scale",
+        "value": 0.7,
+        "days": 63,
+        "priority": 60,
+        "stackWithCredit": true
+      },
+      {
+        "id": "ccc_bot",
+        "action": "ignore",
+        "value": 1,
+        "days": 20,
+        "priority": 40
+      },
+      {
+        "id": "ccc_stress",
+        "action": "scale",
+        "value": 0.5,
+        "days": 1,
+        "priority": 90
+      },
+      {
+        "id": "ccc_above",
+        "action": "scale",
+        "value": 0.5,
+        "days": 1,
+        "priority": 80
+      }
+    ],
+    "start": "2007-01-03",
+    "end": "2026-10-22",
+    "financingAnnualRate": 0.05,
+    "momentum": {
+      "lookback": 126,
+      "skip": 21,
+      "frequency": "monthly",
+      "buffer": 0,
+      "weakness": {
+        "short": 21,
+        "long": 63,
+        "frequency": "weekly"
+      },
+      "longBond": {
+        "series": "DGS30",
+        "lag": 1,
+        "lookback": 126,
+        "onBp": 50,
+        "offBelowBp": 40
+      }
+    }
+  },
+  "inputHash": "31c87a992faa8b3bdf84f4191b1bcc5a563988ef2eec6e38632f76c694140669",
+  "metrics": {
+    "cagr": 0.668666114532058,
+    "mdd": -0.3937060602018464,
+    "sharpe": 1.4092626937242023
+  },
+  "audit": {
+    "dgs30CSVHash": "f9c509f9646ee329f4f5437b43017275397cfb7d5df313f353696a058c5424ad"
+  }
+}
