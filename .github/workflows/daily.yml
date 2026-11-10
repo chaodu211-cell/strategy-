@@ -4,7 +4,16 @@ on:
     branches: [main]
   workflow_dispatch:
   schedule:
-    - cron: '17 2,10 * * *'
+    # 纽约时间：20:47 跟进最优拟合收盘后发布，04:57 和 07:53 盘前补查，12:07 跟进 CCC。
+    # 留出 Actions 排队、上游提交和 Pages 发布时间，账本按实际可用时间观察信号。
+    - cron: "47 20 * * 1-5"
+      timezone: "America/New_York"
+    - cron: "57 4 * * 1-5"
+      timezone: "America/New_York"
+    - cron: "53 7 * * 1-5"
+      timezone: "America/New_York"
+    - cron: "7 12 * * 1-5"
+      timezone: "America/New_York"
 permissions:
   contents: write
   pages: write
@@ -21,6 +30,9 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # 排队期间其他运行可能已推进账本，开始时读取分支最新账本。
+          ref: ${{ github.ref_name }}
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
