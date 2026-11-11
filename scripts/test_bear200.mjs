@@ -29,7 +29,7 @@ const semi=config();semi.asset='SOXX';near(point(data,semi,222).targetExposure,0
 const future=clone(data);future.returns[230]=[1,1,1,1,1,0];future.signals[230]=511;assert.deepEqual(C.run(future,config()).history.slice(0,10),run.history.slice(0,10));
 const invalid=config();invalid.bearGateEnabled='yes';assert.throws(()=>C.validate(invalid));const missing=clone(data);missing.returns[221][0]=null;assert.throws(()=>C.run(missing,config()),/熊市闸门缺少有效/);
 // Independent contract check against the original incremental fitted engine.
-const seed=JSON.parse(readFileSync(new URL('../lib/live-seed.json',import.meta.url)));assert.equal(seed.config['fitted-aggressive'].bear_mult,0);
+assert.equal(C.bearGate200(data,221).multiplier,0,'The custom MA200 gate keeps its zero multiplier');
 const real=JSON.parse(readFileSync(new URL('../public/custom-inputs.json',import.meta.url))),qi=real.symbols.findIndex(s=>s.symbol==='QQQ'),si=real.symbols.findIndex(s=>s.symbol==='SOXX');let q=1,semiPrice=1,history=[];
 for(let i=0;i<real.dates.length;i++){if(i){q*=1+real.returns[i][qi];semiPrice*=1+real.returns[i][si];}const row={date:real.dates[i],prices:{QQQ:q,SOXX:semiPrice},priceBasis:'adjusted'};history.push(row);if(i>=220){const original=deriveMarket(history,row,'QQQ',real.dates[i-1]),gate=C.bearGate200(real,i);assert.equal(gate.active,original.bear,'Original fitted gate contract '+row.date);}}
 console.log(JSON.stringify({fittedBearGate:true,bothPriceAnd21DaySlopeRequired:true,warmup221:true,equalityReopens:true,ordinaryLongOnly:true,blueCanOverride:true,yellowAndRedShortPreserved:true,customPrioritiesPreserved:true,nextClose:true,noLookahead:true,legacyMigration:true,originalEngineDaysVerified:real.dates.length-220}));

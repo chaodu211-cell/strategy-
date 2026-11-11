@@ -1,7 +1,7 @@
 'use strict';
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
-let DATA;
+let DATA,researchVersion=null,researchExtension=null;
 let RUNTIME = {mode:'sites'};
 let MONITOR = null;
 let initialized = false;
@@ -117,8 +117,8 @@ function renderReasons(s) {
 function loadHistoryDetails() {
   if (historyLoadState !== 'idle') return;
   historyLoadState = 'loading';
-  fetch('./history-positions.json').then(r => {if(!r.ok)throw new Error('历史持仓读取失败');return r.json();}).then(data => {
-    if(data.schemaVersion !== 1 || !data.strategies)throw new Error('历史持仓格式无效');
+  fetch('./history-positions.json'+(researchVersion?'?v='+encodeURIComponent(researchVersion):'')).then(r => {if(!r.ok)throw new Error('历史持仓读取失败');return r.json();}).then(data => {
+    if(data.schemaVersion !== 1 || !data.strategies || (researchVersion&&data.meta?.researchVersion!==researchVersion))throw new Error('历史持仓格式无效');
     HISTORY_DETAILS=data;historyLoadState='ready';renderHistory();
   }).catch(error => {historyLoadState='error';renderHistory();});
 }
@@ -137,8 +137,8 @@ function renderAnnotationControls(collection) {
 function loadDailyHistory(){
   if(dailyHistoryState!=='idle')return;
   dailyHistoryState='loading';
-  fetch('./history-daily.json').then(r=>{if(!r.ok)throw new Error('日线净值读取失败');return r.json();}).then(d=>{
-    if(d.schemaVersion!==1||d.dates?.length<2||d.benchmark?.length!==d.dates.length||DATA.strategies.some(s=>d.strategies?.[s.id]?.length!==d.dates.length))throw new Error('日线净值格式无效');
+  fetch('./history-daily.json'+(researchVersion?'?v='+encodeURIComponent(researchVersion):'')).then(r=>{if(!r.ok)throw new Error('日线净值读取失败');return r.json();}).then(d=>{
+    if(d.schemaVersion!==1||(researchVersion&&d.meta?.researchVersion!==researchVersion)||d.dates?.length<2||d.benchmark?.length!==d.dates.length||DATA.strategies.some(s=>d.strategies?.[s.id]?.length!==d.dates.length))throw new Error('日线净值格式无效');
     DAILY_HISTORY=d;dailyHistoryState='ready';renderHistory();
   }).catch(()=>{dailyHistoryState='error';renderHistory();});
 }
@@ -157,7 +157,10 @@ function attachHistoryRangeControls(){
   $('#history-range-reset').addEventListener('click',()=>{if(!chartRange)return;chartRange.first=0;chartRange.last=chartRangeDates.length-1;renderHistory();});
 }
 function currentChartRange(dates,key,initial){
+  const followEnd=chartRange?.key===key&&chartRange.last===chartRangeDates.length-1
+    &&dates.length>chartRangeDates.length&&dates[chartRange.last]===chartRangeDates.at(-1);
   chartRangeDates=dates;
+  if(followEnd)chartRange.last=dates.length-1;
   if(!chartRange||chartRange.key!==key)chartRange={key,...HistoryChart.rangeIndices(dates,initial.start,initial.end)};
   const first=Math.max(0,Math.min(dates.length-2,chartRange.first)),last=Math.max(first+1,Math.min(dates.length-1,chartRange.last));
   Object.assign(chartRange,{first,last,start:dates[first],end:dates[last]});
@@ -171,27 +174,37 @@ function renderRangeMetrics(m,b,note){
   const value=(n,d=1)=>Number.isFinite(n)?fmt(n,d):'—';
   $('#history-metrics').innerHTML=[{label:'区间年化收益',value:pct(m.cagr),note:`QQQ ${pct(b.cagr)}`},{label:'区间最大回撤',value:pct(m.mdd),note:`QQQ ${pct(b.mdd)}`},{label:'区间夏普比率',value:value(m.sharpe,2),note:`QQQ ${value(b.sharpe,2)}`},{label:'区间年换手率',value:`${value(m.turn_yr)}×`,note}].map(m=>`<div class="history-metric"><span>${m.label}</span><strong>${m.value}</strong><small>${m.note}</small></div>`).join('');
 }
-function renderDrawdownSummary(drawdowns){
+function renderDrawdownSummary(drawdowns,date,current){
   const el=$('#drawdown-summary');
-  if(!drawdowns.length){el.textContent='所选区间未出现净值回撤。';return;}
-  el.innerHTML=`<strong class="drawdown-summary-title">区间回撤排名</strong><p class="drawdown-summary-note">底色覆盖峰值到谷底；回到前高前的下跌计为同一段。</p><ol class="drawdown-rank-list">${drawdowns.map((d,i)=>`<li class="history-dd--${i+1}"><span class="drawdown-rank-badge">第 ${i+1} 名</span><strong>${pct(d.value,2)}</strong><span class="drawdown-dates">${escapeHTML(d.peakDate)} → ${escapeHTML(d.troughDate)}</span><small>${d.recoveryDate?'修复 '+escapeHTML(d.recoveryDate):'区间内尚未修复'}</small></li>`).join('')}</ol>`;
+  const latest=`<p class="drawdown-summary-note">截至 ${escapeHTML(date)} · 区间末回撤 <strong>${pct(current,2)}</strong></p>`;
+  if(!drawdowns.length){el.innerHTML=latest+'<p>所选区间未出现净值回撤。</p>';return;}
+  el.innerHTML=latest+`<strong class="drawdown-summary-title">区间回撤排名</strong><p class="drawdown-summary-note">底色覆盖峰值到谷底；回到前高前的下跌计为同一段。</p><ol class="drawdown-rank-list">${drawdowns.map((d,i)=>`<li class="history-dd--${i+1}"><span class="drawdown-rank-badge">第 ${i+1} 名</span><strong>${pct(d.value,2)}</strong><span class="drawdown-dates">${escapeHTML(d.peakDate)} → ${escapeHTML(d.troughDate)}</span><small>${d.recoveryDate?'修复 '+escapeHTML(d.recoveryDate):'区间内尚未修复'}</small></li>`).join('')}</ol>`;
 }
 function renderOriginalRange(current,detail){
-  const d=DAILY_HISTORY,range=currentChartRange(d.dates,'original',DATA.windows[selection.window]);
+  const d=HistoryChart.extendDailyHistory(DAILY_HISTORY,detail,researchExtension,current.id);
+  detail=d.detail;
+  const end=d.dates.at(-1);
+  const windowFor=key=>key==='inSample'?{...DATA.windows[key],end}:DATA.windows[key];
+  const range=currentChartRange(d.dates,'original',windowFor(selection.window));
+  const baseEnd=DAILY_HISTORY.dates.at(-1);
+  $('#history-live-status').textContent=end>baseEnd
+    ?`行情截至 ${end} · 组合信号截至 ${d.signalThrough} · ${baseEnd} 后按已发布信号续算`
+    :`行情截至 ${baseEnd} · 等待日更续算`;
   const a=chartRange.first,b=chartRange.last;
-  const strategy=d.dates.slice(a,b+1).map((date,i)=>({date,nav:d.strategies[current.id][a+i]})),benchmark=d.dates.slice(a,b+1).map((date,i)=>({date,nav:d.benchmark[a+i]}));
+  const strategy=d.dates.slice(a,b+1).map((date,i)=>({date,nav:d.nav[a+i]})),benchmark=d.dates.slice(a,b+1).map((date,i)=>({date,nav:d.benchmark[a+i]}));
   const m=HistoryChart.summarize(strategy,detail.trades),bm=HistoryChart.summarize(benchmark);
-  $$('[data-window]').forEach(btn=>{const r=DATA.windows[btn.dataset.window],active=r.start===range.start&&r.end===range.end;btn.classList.toggle('active',active);btn.setAttribute('aria-pressed',active);});
+  $$('[data-window]').forEach(btn=>{const r=windowFor(btn.dataset.window),active=r.start===range.start&&r.end===range.end;btn.classList.toggle('active',active);btn.setAttribute('aria-pressed',active);});
   $('#history-title').innerHTML=`${displayName(current)} <span>vs 持有 QQQ</span>`;
   renderRangeMetrics(m,bm,`${m.rebalanceDays} 次调仓 · 所选区间`);
   const annotations=HISTORY_DETAILS.modelAnnotations,collection=ModelAnnotations.collect(annotations,detail,range,annotationFilters);renderAnnotationControls(collection);
-  $('#chart-period').textContent=`${range.start} — ${range.end}`;renderDrawdownSummary(m.drawdowns);
+  $('#chart-period').textContent=`${range.start} — ${range.end}`;renderDrawdownSummary(m.drawdowns,range.end,m.currentDrawdown);
   drawChart(strategy,benchmark,detail,m.drawdowns,collection,annotations);
 }
 function renderHistory() {
   const isCustom=historySource==='custom'&&customResult;
   $$('[data-history-source]').forEach(b=>{b.classList.toggle('active',b.dataset.historySource===historySource);b.setAttribute('aria-pressed',b.dataset.historySource===historySource);});
   $('#history-window-controls').hidden=!!isCustom;
+  $('#history-live-status').hidden=!!isCustom;
   $('#history-custom-window-controls').hidden=!isCustom;
   $('#history-caveat-copy').textContent=isCustom?'自定义规则由你设定。反复根据历史结果调整参数可能过拟合；源模型设计也参考过历史，2007–16不能视作完全独立样本外。历史回测不保证未来表现。':'十年数据参与了参数选择，属于样本内；2007–16年的信号设计也参考了历史，只能视作半样本外。回撤预算是筛选条件，不能保证未来回撤上限。';
   if(isCustom){renderCustomHistory();return;}
@@ -247,7 +260,7 @@ function renderCustomHistory() {
   const annotations={...sourceAnnotations,events:(sourceAnnotations.events||[]).map(e=>customDescriptions[e.type]?{...e,description:customDescriptions[e.type]}:e),readings:customReadings};
   const collection=ModelAnnotations.collect(annotations,detail,range,annotationFilters);renderAnnotationControls(collection);
   $('#annotation-status').textContent=`自定义回测选区：${collection.trades.length} 个已成交的仓位变化、${collection.events.length} 个模型标记。目标不变的再平衡只在悬停明细展示。`;
-  renderDrawdownSummary(m.drawdowns);
+  renderDrawdownSummary(m.drawdowns,range.end,m.currentDrawdown);
   drawChart(strategy,benchmark,detail,m.drawdowns,collection,annotations,result.config);
 }
 
@@ -434,9 +447,11 @@ async function refreshLive() {
     if(!response.ok)throw new Error(`HTTP ${response.status}`);
     const payload=await response.json();
     if(!payload.data?.strategies?.length || !payload.monitor?.checkedAt)throw new Error('上游响应未通过结构校验');
+    if(researchVersion&&payload.data.meta?.researchVersion!==researchVersion)throw new Error('日更数据版本尚未同步');
     DATA=payload.data;MONITOR=payload.monitor;lastSuccessMonitor=MONITOR;
+    if(payload.researchHistory?.version===researchVersion)researchExtension=payload.researchHistory;
     $('#loading-error').hidden=true;
-    try{localStorage.setItem('dual-model-last-verified',JSON.stringify({schema:1,data:DATA,monitor:MONITOR}));}catch{}
+    try{localStorage.setItem('dual-model-last-verified',JSON.stringify({schema:1,data:DATA,monitor:MONITOR,researchHistory:researchExtension}));}catch{}
     init();
   } catch(error) {
     MONITOR={...(lastSuccessMonitor||MONITOR||{}),status:'error',checkedAt:new Date().toISOString(),warnings:[`本次仓库检查失败（${error.name==='AbortError'?'请求超时':error.message}）。保留最近完整结果；持仓日期不会前移。`]};
@@ -446,9 +461,9 @@ async function refreshLive() {
 async function bootstrap() {
   try {
     try{RUNTIME=await fetch('./runtime-config.json').then(r=>r.json());}catch{}
-    const response=await fetch('./data.json');if(!response.ok)throw new Error('研究数据读取失败');
-    const base=await response.json();DATA=base;
-    try{const saved=JSON.parse(localStorage.getItem('dual-model-last-verified'));if(saved?.schema===1 && saved.data?.meta?.signalDate>=base.meta.signalDate){DATA=saved.data;lastSuccessMonitor=saved.monitor;MONITOR={...saved.monitor,status:'loading',warnings:['正在重新校验仓库，暂时显示此设备上次保存的结果。']};}}catch{}
+    const response=await fetch('./data.json?v=20261111',{cache:'no-store'});if(!response.ok)throw new Error('研究数据读取失败');
+    const base=await response.json();DATA=base;researchVersion=base.meta.researchVersion??null;
+    try{const saved=JSON.parse(localStorage.getItem('dual-model-last-verified'));if(saved?.schema===1 && saved.data?.meta?.signalDate>=base.meta.signalDate&&(!researchVersion||saved.data.meta.researchVersion===researchVersion)){DATA=saved.data;researchExtension=saved.researchHistory??null;lastSuccessMonitor=saved.monitor;MONITOR={...saved.monitor,status:'loading',warnings:['正在重新校验仓库，暂时显示此设备上次保存的结果。']};}}catch{}
     init();await refreshLive();
   }catch(error){$('#loading-error').hidden=false;$('#freshness-copy').textContent=error.message;}
 }

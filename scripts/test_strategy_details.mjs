@@ -13,10 +13,10 @@ for(const s of data.strategies){
   for(const r of s.reasons.filter(r=>r.active))assert.ok(html.includes(r.title));
   assert.ok(html.includes(p.use_ad?'实心或空心红点':'仅实心红点'));
   if(p.blue_hold)assert.ok(html.includes(`${p.blue_lev} × min(1, N / ${p.blue_k})`));else assert.ok(html.includes('不启用蓝点分批抄底'));
-  if(p.dd_brake)assert.ok(html.includes('20%')&&html.includes('10%'));else assert.ok(html.includes('不启用组合回撤闸'));
+  if(p.dd_brake)assert.ok(html.includes(`${p.dd_brake[0]*100}%`)&&html.includes(`${p.dd_brake[0]*50}%`));else assert.ok(html.includes('不启用组合回撤闸'));
 }
 const aggressive=data.strategies.find(s=>s.id==='fitted-aggressive'),a=buildContent(aggressive,registry.strategies[aggressive.id]);
-for(const text of ['3 × min(1, N / 10)','50% / QQQ','常态敞口乘 0.75','持有 1 倍纳指反向敞口','持有 0.5 倍纳指反向敞口','21 个交易日前','63 个交易日'])assert.ok(a.includes(text),text);
+for(const text of ['常态基准 2.5 倍','3 × min(1, N / 1)','30% / SOXX','常态敞口乘 0.5','持有 1 倍纳指反向敞口','21 个交易日前','126 个交易日','7.5%'])assert.ok(a.includes(text),text);
 const unsafe=structuredClone(data.strategies[0]),params=structuredClone(registry.strategies[unsafe.id]);unsafe.summary='<script>bad</script>';unsafe.reasons=[{active:true,title:'<img src=x>',detail:'<script>bad</script>'}];params.pick='<img src=x>';
 assert.ok(!buildContent(unsafe,params).includes('<script>'));assert.ok(!buildContent(unsafe,params).includes('<img'));
 
@@ -30,7 +30,7 @@ const makeUI=fetcher=>{
 let resolve,requests=0;const ui=makeUI(()=>{requests++;return new Promise(r=>resolve=r);});
 const first=ui.api.open(data.strategies[0]),second=ui.api.open(aggressive);
 assert.ok(ui.body.innerHTML.includes('正在读取'));resolve({ok:true,json:async()=>registry});await Promise.all([first,second]);
-assert.equal(requests,1);assert.equal(ui.title.textContent,'拟合·进取');assert.ok(ui.body.innerHTML.includes('3 × min(1, N / 10)'));
+assert.equal(requests,1);assert.equal(ui.title.textContent,'拟合·进取');assert.ok(ui.body.innerHTML.includes('3 × min(1, N / 1)'));
 ui.api.close();assert.equal(ui.dialog.open,false);
 let attempts=0;const retryUI=makeUI(async()=>{attempts++;if(attempts===1)throw Error('offline');return{ok:true,json:async()=>registry};});
 await retryUI.api.open(aggressive);assert.ok(retryUI.body.innerHTML.includes('暂未读取成功'));assert.ok(retryUI.body.innerHTML.includes('当前目标仓位'));await retryUI.handlers.retry();assert.equal(attempts,2);assert.ok(retryUI.body.innerHTML.includes('具体策略规则'));

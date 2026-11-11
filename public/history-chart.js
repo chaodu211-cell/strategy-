@@ -55,10 +55,21 @@
     const returns=series.slice(1).map((p,i)=>p.nav/series[i].nav-1),mean=returns.reduce((a,b)=>a+b,0)/returns.length;
     const vol=returns.length>1?Math.sqrt(returns.reduce((s,r)=>s+(r-mean)**2,0)/(returns.length-1))*Math.sqrt(252):0;
     const drawdowns=rankDrawdowns(series);
+    const currentDrawdown=last.nav/series.reduce((peak,point)=>Math.max(peak,point.nav),first.nav)-1;
     const dd=drawdowns[0]||{value:0,peakDate:first.date,troughDate:first.date,peakNav:first.nav,troughNav:first.nav,recoveryDate:first.date};
     const days=new Map();for(const t of trades){if(t.date<=first.date||t.date>last.date)continue;let d=days.get(t.date);if(!d){d={equity:0,cash:Math.abs(t.cashAfter-t.cashBefore)};days.set(t.date,d);}d.equity+=Math.abs(t.weightChange);}
     const turnover=[...days.values()].reduce((s,d)=>s+(d.equity+d.cash)/2,0);
-    return{cagr:(last.nav/first.nav)**(1/years)-1,mdd:dd.value,sharpe:vol>0?mean*252/vol:null,vol,turn_yr:turnover/years,drawdown:dd,drawdowns,rebalanceDays:days.size};
+    return{cagr:(last.nav/first.nav)**(1/years)-1,mdd:dd.value,sharpe:vol>0?mean*252/vol:null,vol,turn_yr:turnover/years,drawdown:dd,drawdowns,currentDrawdown,rebalanceDays:days.size};
+  }
+  function extendDailyHistory(daily,detail,extension,id){
+    const original={dates:daily.dates,nav:daily.strategies[id],benchmark:daily.benchmark,detail};
+    const tail=extension?.strategies?.[id],dates=extension?.dates;
+    if(!tail||!dates?.length||extension.version!==daily.meta?.researchVersion||extension.baseEnd!==daily.dates.at(-1)
+      ||tail.nav?.length!==dates.length||extension.benchmark?.length!==dates.length||!Array.isArray(tail.trades))return original;
+    if(dates.some((date,i)=>date<=(dates[i-1]??extension.baseEnd)||!tail.points?.[date]
+      ||!Number.isFinite(tail.nav[i])||tail.nav[i]<=0||!Number.isFinite(extension.benchmark[i])||extension.benchmark[i]<=0))return original;
+    return {dates:[...daily.dates,...dates],nav:[...original.nav,...tail.nav],benchmark:[...daily.benchmark,...extension.benchmark],
+      detail:{...detail,points:{...detail.points,...tail.points},trades:[...detail.trades,...tail.trades]},signalThrough:extension.signalThrough};
   }
   function customReasons(detail, config) {
     const n=value=>Number.isFinite(value)?String(Number(value.toFixed(2))):'—';
@@ -121,5 +132,5 @@
     html += `<p class="hover-note">${detail.rebalanced ? '当日收盘已按前一交易日信号再平衡。' : `未触发${band}个百分点再平衡带，权重可能随价格浮动。`}<br>回测模拟持仓，非账户实盘持仓。</p>`;
     return html;
   }
-  root.HistoryChart = Object.freeze({nearestIndex, mergeLandmarks, tooltipHTML,rangeIndices,summarize,rankDrawdowns,customReasons});
+  root.HistoryChart = Object.freeze({nearestIndex, mergeLandmarks, tooltipHTML,rangeIndices,summarize,rankDrawdowns,extendDailyHistory,customReasons});
 })(window);

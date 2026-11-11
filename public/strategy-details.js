@@ -33,7 +33,7 @@
   }
   let registryPromise;
   function loadRules(){
-    if(!registryPromise)registryPromise=fetch('./strategy-rules.json?v=20261105-details').then(r=>{if(!r.ok)throw new Error('策略参数读取失败');return r.json();}).then(data=>{if(data.schemaVersion!==1||!data.strategies)throw new Error('策略参数格式无效');return data.strategies;}).catch(error=>{registryPromise=null;throw error;});
+    if(!registryPromise)registryPromise=fetch('./strategy-rules.json?v=20261111').then(r=>{if(!r.ok)throw new Error('策略参数读取失败');return r.json();}).then(data=>{if(data.schemaVersion!==1||!data.strategies)throw new Error('策略参数格式无效');return data.strategies;}).catch(error=>{registryPromise=null;throw error;});
     return registryPromise;
   }
   function attach(){
