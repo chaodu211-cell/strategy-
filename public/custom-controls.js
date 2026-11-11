@@ -80,7 +80,7 @@
     function dirty(){syncRows();if(busy)return;status.textContent=lastResult?'设置已修改。图中仍为上次生成的回测，请点击“生成回测”应用新设置。':'设置完成后点击“生成回测”。';status.classList.remove('error');$('#custom-stale').hidden=!lastResult;}
     function load(){
       if(data)return Promise.resolve(data);
-      if(!loading)loading=fetch('./custom-inputs.json').then(r=>{if(!r.ok)throw new Error('历史行情读取失败，请稍后重试。');return r.json();}).then(value=>{if(value.schemaVersion!==1)throw new Error('历史行情格式无效。');data=value;return value;}).catch(e=>{loading=null;throw e;});
+      if(!loading)loading=fetch('./custom-inputs.json?v=20261111-fit',{cache:'no-store'}).then(r=>{if(!r.ok)throw new Error('历史行情读取失败，请稍后重试。');return r.json();}).then(value=>{if(value.schemaVersion!==1)throw new Error('历史行情格式无效。');data=value;return value;}).catch(e=>{loading=null;throw e;});
       return loading;
     }
     function loadDgs30(){
@@ -121,9 +121,9 @@
         if(!registered)try{localStorage.setItem(STORAGE,JSON.stringify(result.config));}catch{saved=false;}
         $('#custom-stale').hidden=true;
         $('#export-custom-settings').disabled=false;$('#export-custom-daily').disabled=false;
-        const a=result.audit;
+        const a=result.audit, signalRevision=source.meta.signalRevision;
         $('#custom-summary').hidden=false;
-        $('#custom-summary').innerHTML=`<strong>${esc(result.config.name)}</strong><span>${result.range.start} — ${result.range.end} · ${a.days.toLocaleString()} 个交易日 · ${a.rebalanceDays} 次调仓</span><p>${a.limitedDays?`${a.limitedDays} 日的目标受当时可交易工具及100%资金权重限制，已按实际可实现敞口计算。`:'全部目标均可按所选工具及蓝点融资规则实现。'}${result.config.bearGateEnabled?` 熊市闸门·${esc(C.BEAR_GATE_METHODS[result.config.bearGateMethod??'ma200'].label)} 减仓状态 ${a.bearGateDays} 日，常态多头受限 ${a.bearGateAppliedDays} 日。`:''}${result.config.drawdownGateEnabled?` 回撤闸触发状态 ${a.drawdownGateDays} 日，常态多头减半 ${a.drawdownGateAppliedDays} 日。`:''}${result.config.cccStressBlueLimitEnabled?` CCC压力位蓝点限制已启用（10日波动率、跟随当日默认标的），降低最终多头目标 ${a.cccStressBlueLimitDays} 日。`:''}${a.syntheticDays?` 含 ${a.syntheticDays} 日合成ETF持仓。`:' 未持有合成ETF。'}${a.financingDays?` 融资持仓 ${a.financingDays} 日，年利率固定5%，累计利息相当于初始资金的 ${(a.financingInterestPaid*100).toFixed(2)}%。`:''}</p>`;
+        $('#custom-summary').innerHTML=`<strong>${esc(result.config.name)}</strong><span>${result.range.start} — ${result.range.end} · ${a.days.toLocaleString()} 个交易日 · ${a.rebalanceDays} 次调仓</span>${signalRevision?`<p>最优拟合信号口径 ${esc(signalRevision)} · 历史行情截至 ${esc(source.meta.end)}</p>`:''}<p>${a.limitedDays?`${a.limitedDays} 日的目标受当时可交易工具及100%资金权重限制，已按实际可实现敞口计算。`:'全部目标均可按所选工具及蓝点融资规则实现。'}${result.config.bearGateEnabled?` 熊市闸门·${esc(C.BEAR_GATE_METHODS[result.config.bearGateMethod??'ma200'].label)} 减仓状态 ${a.bearGateDays} 日，常态多头受限 ${a.bearGateAppliedDays} 日。`:''}${result.config.drawdownGateEnabled?` 回撤闸触发状态 ${a.drawdownGateDays} 日，常态多头减半 ${a.drawdownGateAppliedDays} 日。`:''}${result.config.cccStressBlueLimitEnabled?` CCC压力位蓝点限制已启用（10日波动率、跟随当日默认标的），降低最终多头目标 ${a.cccStressBlueLimitDays} 日。`:''}${a.syntheticDays?` 含 ${a.syntheticDays} 日合成ETF持仓。`:' 未持有合成ETF。'}${a.financingDays?` 融资持仓 ${a.financingDays} 日，年利率固定5%，累计利息相当于初始资金的 ${(a.financingInterestPaid*100).toFixed(2)}%。`:''}</p>`;
         status.textContent=`回测已生成，可在图右上角切换查看周期。${registered?'本次采用当前登记参数。':saved?'设置已保存在本浏览器。':'本浏览器无法保存设置，可下载设置备份。'}`;
         onResult(result,C.readings(source),registered);
         $('#history').scrollIntoView({behavior:'smooth',block:'start'});

@@ -6,6 +6,11 @@ import {fileURLToPath} from 'node:url';
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
 // Public research assets are compressed in GitHub to keep source publication compact.
 try{for(const name of await readdir(resolve(root,'seed-assets'))){if(!name.endsWith('.gz'))continue;const dest=name.slice(0,-3).replaceAll('__','/');if(dest==='public/daily-live.json'){try{await access(resolve(root,dest));continue;}catch{}}await mkdir(dirname(resolve(root,dest)),{recursive:true});await writeFile(resolve(root,dest),gunzipSync(await readFile(resolve(root,'seed-assets',name))));}}catch(error){if(error.code!=='ENOENT')throw error;}
+const research=JSON.parse(await readFile(resolve(root,'public/data.json'),'utf8'));
+const custom=JSON.parse(await readFile(resolve(root,'public/custom-inputs.json'),'utf8'));
+if(research.meta.researchVersion&&custom.meta.researchVersion!==research.meta.researchVersion){
+  throw new Error('自定义回测信号与原策略研究版本不一致，请先更新自定义回测输入。');
+}
 if(process.argv.includes('--restore-only'))process.exit(0);
 await validatePublicAssets(resolve(root,'public'));
 await mkdir(resolve(root,'pages'),{recursive:true});
