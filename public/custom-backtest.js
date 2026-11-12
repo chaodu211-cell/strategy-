@@ -25,7 +25,7 @@
   const isVixBottomFishing=rule=>rule?.id===TRIANGLE.id&&rule.action==='scale';
   const canFinance=rule=>rule?.action==='blue_ladder'||isVixBottomFishing(rule);
   const limitRuleExposure=(rule,exposure)=>canFinance(rule)?exposure:Math.max(-3,Math.min(3,exposure));
-  const actionLabel=(id,action)=>isVixBottomFishing({id,action})?'抄底仓位（常态敞口 × n）':ACTIONS[action];
+  const actionLabel=(id,action)=>isVixBottomFishing({id,action})?'抄底仓位（常态底层 n 倍）':ACTIONS[action];
   const ruleValueMax=(id,action)=>id===TRIANGLE.id&&['scale','flat','ignore'].includes(action)?10:3;
   const usesTriangle=cfg=>cfg.rules?.some(r=>r.id===TRIANGLE.id&&r.action!=='ignore')===true;
   function hasTriangleCoverage(series,end){
@@ -157,7 +157,15 @@
     const creditStack=top?.stackWithCredit!==false&&top?.action==='scale'&&creditState?.action==='scale'?{topRule:top.id,creditRule:creditState.id,creditLabel:creditState.label,topMultiplier:top.value,creditMultiplier:creditState.value,combinedMultiplier:top.value*creditState.value,target:cfg.baseExposure*top.value*creditState.value,topSignalDate:data.dates[top.sourceIndex],days:top.days,priority:Math.max(top.priority,creditState.priority),selected:false}:null;
     const stackApplies=r=>creditStack&&(r===top||r===creditState);
     const stackLabel=creditStack?`${top.label} × ${creditState.label}`:null;
-    const rawRuleExposure=r=>stackApplies(r)?creditStack.target:!r?cfg.baseExposure:r.action==='flat'?0:r.action==='long'?r.value:r.action==='short'?-r.value:r.action==='blue_ladder'?blueLadder.target:cfg.baseExposure*r.value;
+    function rawRuleExposure(rule){
+      if(stackApplies(rule))return creditStack.target;
+      if(!rule)return cfg.baseExposure;
+      if(rule.action==='flat')return 0;
+      if(rule.action==='long'||isVixBottomFishing(rule))return rule.value;
+      if(rule.action==='short')return -rule.value;
+      if(rule.action==='blue_ladder')return blueLadder.target;
+      return cfg.baseExposure*rule.value;
+    }
     const bearGate=cfg.bearGateEnabled?((cfg.bearGateMethod??'ma200')==='ensemble'?bearGateEnsemble(data,t):bearGate200(data,t)):null;
     // The bear gate applies to ordinary long exposure. Bottom-fishing entries bypass it.
     const gateApplies=r=>bearGate?.active&&r?.id!=='yellow'&&r?.id!=='blue'&&r?.id!==TRIANGLE.id&&rawRuleExposure(r)>0;
@@ -208,7 +216,7 @@
       state+=' · CCC压力位蓝点限制';
     }
     const action=vixBottomFishing
-      ? `${winner.label}：抄底仓位，常态敞口 ${number(cfg.baseExposure)} 倍 × ${number(winner.value)} = ${number(rawRuleExposure(winner))} 倍`
+      ? `${winner.label}：抄底仓位，${selection} ${number(winner.value)} 倍底层敞口`
       : winner?`${winner.label}：${ACTIONS[winner.action]}${!['flat','ignore'].includes(winner.action)?' '+number(winner.value)+(winner.action==='scale'?'':'×'):''}`:`常态：${selection} ${number(cfg.baseExposure)}×`;
     const reasons=[winner?`${action}。${winner.id==='yellow'?'锁定至解锁条件满足，不按天数到期':winner.state?'条件保持时生效':`信号日 ${data.dates[winner.sourceIndex]}，有效 ${winner.days} 个交易日（含信号日）`}；优先级 ${winner.priority}。`:`当前无已启用的预警规则生效，按常态 ${selection} ${number(cfg.baseExposure)} 倍配置。`];
     if(bearGate?.method==='ensemble'){

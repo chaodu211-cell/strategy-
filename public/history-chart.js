@@ -86,7 +86,7 @@
     else if(credit?.selected)reasons.push(`CCC见顶 × ${credit.creditLabel}：常态敞口 × ${n(credit.combinedMultiplier)}。`);
     else if(rule){
       const scale=rule.id==='triangle'
-        ?`抄底仓位 ${x(config.baseExposure)} × ${n(rule.value)} = ${x(config.baseExposure*rule.value)}，熊市闸门跳过该仓位`
+        ?`抄底仓位 ${detail.selection} ${x(rule.value)}底层敞口，熊市闸门跳过该仓位`
         :`常态敞口 × ${n(rule.value)}`;
       const action={flat:'清仓至BIL',long:`原多头目标 ${x(rule.value)}`,short:`做空目标 ${x(rule.value)}`,scale,blue_ladder:'分批建仓'}[rule.action]||'按当前配置';
       const original=source.find(r=>r.startsWith(base+'：'))||'',window=original.match(/信号日 (\d{4}-\d{2}-\d{2})，有效 (\d+) 个交易日/);

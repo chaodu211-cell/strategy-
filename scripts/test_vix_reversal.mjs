@@ -10,7 +10,7 @@ const near=(actual,expected)=>assert.ok(Math.abs(actual-expected)<1e-9,actual+' 
 
 const panel=await read('custom-inputs.json');
 panel.vixTermRelease=await read('vix-term-release.json');
-const config={...engine.defaults(),start:'2022-06-13',end:'2022-12-09',baseExposure:1,
+const config={...engine.defaults(),start:'2022-06-13',end:'2022-12-09',baseExposure:3,
   bearGateEnabled:true,cccStressBlueLimitEnabled:true,band:.25};
 for(const rule of config.rules)rule.action='ignore';
 Object.assign(reversal(config),{action:'scale',value:6,days:40});
@@ -25,9 +25,13 @@ for(const date of ['2022-08-11','2022-08-12','2022-08-15']){
   const point=result.details.points[date];
   assert.equal(point.state,'vix反转 · 抄底仓位');
   assert.equal(point.bearGate.applied,false);
-  near(point.targetExposure,6);
+  near(point.targetExposure,6); // The configured 3x ordinary exposure is not a factor.
   near(point.targetCash,-1);
 }
+const soxx=engine.run(panel,{...config,asset:'SOXX',baseExposure:.5}).details.points['2022-08-12'];
+assert.equal(soxx.selection,'SOXX');
+assert.equal(soxx.targetHoldings[0][0],'SOXL');
+near(soxx.targetExposure,6);
 assert.equal(result.details.points['2022-08-12'].bearGate.multiplier,0);
 assert.ok(result.details.points['2022-08-11'].bearGate.multiplier>0);
 assert.ok(!result.details.trades.some(trade=>trade.date==='2022-08-12'&&trade.type==='sell'));
@@ -48,7 +52,7 @@ const fixture={
 };
 const firstEntryConfig={...structuredClone(config),start:dates[1],end:dates.at(-1),baseExposure:1.5,
   bearGateEnabled:false,cccStressBlueLimitEnabled:false};
-Object.assign(reversal(firstEntryConfig),{value:1.1,days:2});
+Object.assign(reversal(firstEntryConfig),{value:1.65,days:2});
 const points=engine.run(fixture,firstEntryConfig).details.points;
 near(points['2022-01-05'].exposure,1.5);
 near(points['2022-01-06'].exposure,1.65);
