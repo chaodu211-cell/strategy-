@@ -132,6 +132,7 @@ assert.equal(snapshot.through,raw.dates.at(-1));
 assert.equal(Object.keys(snapshot.yieldsBp).length,raw.dates.length);
 assert.equal(snapshot.yieldsBp['2026-10-12'],snapshot.yieldsBp['2026-10-09'],'Historical Fed holiday carries forward');
 raw.dgs30=snapshot.yieldsBp;
+raw.vixTermRelease=await read('vix-term-release.json');
 const cfg=C.defaults();
 cfg.asset='momentum';
 cfg.momentum={lookback:22,skip:0,frequency:'daily',buffer:.1};

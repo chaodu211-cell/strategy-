@@ -12,7 +12,7 @@
     {id:'ccc_stress',label:'信用压力（分位≥95）',group:'CCC 利差',state:true,days:1,priority:70,action:'scale',value:.5},
     {id:'ccc_above',label:'利差高于200日线',group:'CCC 利差',state:true,days:1,priority:50,action:'scale',value:.5},
     // Keep the existing nine signal-mask positions stable.
-    {id:'triangle',label:'三角',group:'最优拟合',days:10,priority:85,action:'ignore',value:1},
+    {id:'triangle',label:'三角',group:'最优拟合',days:10,priority:85,action:'scale',value:1},
   ].map(Object.freeze));
   const ACTIONS=Object.freeze({ignore:'不响应',flat:'清仓至 BIL',long:'指定多头敞口',short:'指定纳指空头',scale:'常态敞口 × 乘数',blue_ladder:'蓝点分批建仓'});
   const copy=x=>JSON.parse(JSON.stringify(x));
@@ -21,6 +21,8 @@
   const FINANCING_RATE=.05;
   const DATE=/^\d{4}-\d{2}-\d{2}$/;
   const TRIANGLE=RULES.at(-1);
+  const LEGACY_TRIANGLE={...TRIANGLE,action:'ignore'};
+  const ruleValueMax=(id,action)=>id===TRIANGLE.id&&['scale','flat','ignore'].includes(action)?10:3;
   const usesTriangle=cfg=>cfg.rules?.some(r=>r.id===TRIANGLE.id&&r.action!=='ignore')===true;
   function hasTriangleCoverage(series,end){
     return DATE.test(series?.through||'')&&series.through>=end&&series.events&&
@@ -81,10 +83,11 @@
     if(!Array.isArray(c.rules)||c.rules.some(r=>!r)||new Set(c.rules.map(r=>r.id)).size!==c.rules.length||
       c.rules.some(r=>!RULES.some(known=>known.id===r.id)))throw new Error('每个预警须有且仅有一条设置。');
     c.rules=RULES.map(r=>{
-      const rule=c.rules.find(x=>x.id===r.id)??(r===TRIANGLE?TRIANGLE:null);if(!rule||!Object.hasOwn(ACTIONS,rule.action))throw new Error(`${r.label}操作无效。`);
+      const rule=c.rules.find(x=>x.id===r.id)??(r===TRIANGLE?LEGACY_TRIANGLE:null);if(!rule||!Object.hasOwn(ACTIONS,rule.action))throw new Error(`${r.label}操作无效。`);
       if(rule.action==='blue_ladder'&&r.id!=='blue')throw new Error('分批建仓只适用于实心蓝点。');
       if(rule.action==='blue_ladder'){if(typeof rule.value!=='number'||!Number.isFinite(rule.value)||rule.value<0)throw new Error('蓝点 x 须为非负有限数，不设人为上限。');}
-      else bound(rule.value,0,3,r.label+'敞口/乘数');if(!r.conditional)bound(rule.days,1,252,r.label+'持续交易日',true);bound(rule.priority,1,99,r.label+'优先级',true);
+      else bound(rule.value,0,ruleValueMax(r.id,rule.action),r.label+(rule.action==='scale'?'乘数':'敞口'));
+      if(!r.conditional)bound(rule.days,1,252,r.label+'持续交易日',true);bound(rule.priority,1,99,r.label+'优先级',true);
       const steps=rule.steps===undefined?10:rule.steps;
       if(r.id==='blue')bound(steps,1,252,'蓝点分批数 n',true);
       const onlyIfNotLower=rule.onlyIfNotLower===undefined?true:rule.onlyIfNotLower;
@@ -460,5 +463,5 @@
     return{config:cfg,range:{start:data.dates[start],end:data.dates[end]},history,benchmark,metrics,benchmarkMetrics,details:{points,trades},audit:{inputHash:data.meta.inputHash,...(data.meta.dgs30CSVHash?{dgs30CSVHash:data.meta.dgs30CSVHash}:{}),days:history.length,bearGateDays,bearGateAppliedDays,drawdownGateDays,drawdownGateAppliedDays,cccStressBlueLimitDays,limitedDays,syntheticDays,rebalanceDays,costPaid,financingDays,financingInterestPaid,financingAnnualRate:FINANCING_RATE},sourceMeta:copy(data.meta)};
   }
   function readings(data){return Object.fromEntries(data.dates.map((d,i)=>{const v=data.readings[i],mask=data.signals[i];return[d,{temperature:v[0],tdc:v[1],creditSpread:v[2],creditMA200:v[3],creditPercentile:v[4],creditSourceDate:v[5],creditStress:!!(mask&(1<<7)),creditAbove:!!(mask&(1<<8))}];}));}
-  root.CustomBacktest=Object.freeze({RULES,ACTIONS,MOMENTUM_METHODS,DEFAULT_MOMENTUM_METHOD,BEAR_GATE_METHODS,DEFAULT_BEAR_GATE_METHOD,bearGateEnsemble,defaults,validate,usesMomentum,usesDgs30,usesTriangle,hasTriangleCoverage,resolveTarget,bearGate200,momentumChoice,stats,run,readings});
+  root.CustomBacktest=Object.freeze({RULES,ACTIONS,MOMENTUM_METHODS,DEFAULT_MOMENTUM_METHOD,BEAR_GATE_METHODS,DEFAULT_BEAR_GATE_METHOD,bearGateEnsemble,defaults,validate,ruleValueMax,usesMomentum,usesDgs30,usesTriangle,hasTriangleCoverage,resolveTarget,bearGate200,momentumChoice,stats,run,readings});
 })(typeof window!=='undefined'?window:globalThis);
