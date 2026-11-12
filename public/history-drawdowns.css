@@ -15,3 +15,10 @@
 .drawdown-rank-badge{padding:0 5px;border-radius:3px;background:var(--dd-tint);color:var(--dd-ink);font-size:11px}
 .drawdown-rank-list strong{font-size:14px;color:var(--dd-ink);font-variant-numeric:tabular-nums}
 .drawdown-dates,.drawdown-rank-list small{flex-basis:100%;font-size:11px;font-variant-numeric:tabular-nums}
+
+.history-metrics{grid-template-columns:repeat(5,minmax(0,1fr))}
+.history-metric:nth-child(3)>strong{color:#9e8371}
+@media(max-width:560px){
+  .history-metrics{grid-template-columns:repeat(3,minmax(0,1fr));row-gap:8px}
+  .history-metric:nth-child(4){padding-left:0;border-left:0}
+}

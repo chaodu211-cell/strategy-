@@ -54,12 +54,14 @@
     const first=series[0],last=series.at(-1),years=(Date.parse(last.date)-Date.parse(first.date))/86400000/365.25;
     const returns=series.slice(1).map((p,i)=>p.nav/series[i].nav-1),mean=returns.reduce((a,b)=>a+b,0)/returns.length;
     const vol=returns.length>1?Math.sqrt(returns.reduce((s,r)=>s+(r-mean)**2,0)/(returns.length-1))*Math.sqrt(252):0;
-    const drawdowns=rankDrawdowns(series);
+    const topFive=rankDrawdowns(series,5);
+    const topFiveDrawdownMean=topFive.length?topFive.reduce((sum,episode)=>sum+episode.value,0)/topFive.length:0;
+    const drawdowns=topFive.slice(0,3);
     const currentDrawdown=last.nav/series.reduce((peak,point)=>Math.max(peak,point.nav),first.nav)-1;
     const dd=drawdowns[0]||{value:0,peakDate:first.date,troughDate:first.date,peakNav:first.nav,troughNav:first.nav,recoveryDate:first.date};
     const days=new Map();for(const t of trades){if(t.date<=first.date||t.date>last.date)continue;let d=days.get(t.date);if(!d){d={equity:0,cash:Math.abs(t.cashAfter-t.cashBefore)};days.set(t.date,d);}d.equity+=Math.abs(t.weightChange);}
     const turnover=[...days.values()].reduce((s,d)=>s+(d.equity+d.cash)/2,0);
-    return{cagr:(last.nav/first.nav)**(1/years)-1,mdd:dd.value,sharpe:vol>0?mean*252/vol:null,vol,turn_yr:turnover/years,drawdown:dd,drawdowns,currentDrawdown,rebalanceDays:days.size};
+    return{cagr:(last.nav/first.nav)**(1/years)-1,mdd:dd.value,sharpe:vol>0?mean*252/vol:null,vol,turn_yr:turnover/years,drawdown:dd,drawdowns,topFiveDrawdownMean,currentDrawdown,rebalanceDays:days.size};
   }
   function extendDailyHistory(daily,detail,extension,id){
     const original={dates:daily.dates,nav:daily.strategies[id],benchmark:daily.benchmark,detail};

@@ -17,7 +17,7 @@ const full=H.summarize(fixture),crop=H.summarize(fixture.slice(2));assert.equal(
 assert.equal(H.summarize(fixture.slice(1,3)).drawdown.peakDate,'2025-01-06');
 const trades=[{date:'2025-01-06',weightChange:.3,cashBefore:.5,cashAfter:.4},{date:'2025-01-06',weightChange:-.2,cashBefore:.5,cashAfter:.4}];
 const m=H.summarize(fixture,trades),years=5/365.25;assert.ok(Math.abs(m.turn_yr*years-.3)<1e-12);assert.equal(m.rebalanceDays,1,'One cash change per date, even when several ETFs trade');
-const flat=H.summarize([{date:'2025-01-03',nav:1},{date:'2025-01-06',nav:1}]);assert.equal(flat.sharpe,null);assert.equal(flat.cagr,0);assert.equal(flat.mdd,0);
+const flat=H.summarize([{date:'2025-01-03',nav:1},{date:'2025-01-06',nav:1}]);assert.equal(flat.sharpe,null);assert.equal(flat.cagr,0);assert.equal(flat.mdd,0);assert.equal(flat.topFiveDrawdownMean,0);
 assert.equal(fixture[0].nav,2,'Range selection must not rewrite the underlying NAV');
 assert.ok(H.tooltipHTML({date:'2025-01-03',value:1},1,null,null,'ready').includes('暂无存档持仓明细'));
 console.log(JSON.stringify({chartRange:true,originalDailyWindowsVerified:checked,weekendSnapping:true,nonCrossing:true,inRangeDrawdown:true,noFutureRecovery:true,turnoverDeduplicated:true,twoPointMinimum:true}));
@@ -31,6 +31,12 @@ assert.deepEqual(Array.from(ranked,d=>d.troughDate),['2025-02-04','2025-02-08','
 assert.equal(ranked[0].recoveryDate,'2025-02-05');
 assert.equal(ranked[2].recoveryDate,null);
 assert.equal(H.summarize(path).mdd,ranked[0].value);
+assert.ok(Math.abs(H.summarize(path).topFiveDrawdownMean+.2125)<1e-12,'Use all four independent episodes when fewer than five exist');
+const sixEpisodes=[100,95,100,90,100,85,100,80,100,75,100,70]
+  .map((nav,i)=>({date:'2025-03-'+String(i+1).padStart(2,'0'),nav}));
+const sixMetrics=H.summarize(sixEpisodes);
+assert.ok(Math.abs(sixMetrics.topFiveDrawdownMean+.2)<1e-12,'Exclude the shallowest episode and include the unrecovered one');
+assert.equal(sixMetrics.drawdowns.length,3,'The chart still ranks three episodes');
 const clipped=H.rankDrawdowns(path.slice(2,4));
 assert.equal(clipped.length,1);
 assert.equal(clipped[0].peakDate,'2025-02-03','No peak outside the selected range');

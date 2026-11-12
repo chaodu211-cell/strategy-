@@ -170,9 +170,26 @@ function currentChartRange(dates,key,initial){
   $('#history-range-status').textContent=`${dates[first]} — ${dates[last]} · ${last-first+1} 个交易日`;
   return{start:dates[first],end:dates[last]};
 }
+function topFiveDrawdownMetric(m,b){
+  const value=metrics=>Number.isFinite(metrics.topFiveDrawdownMean)?pct(metrics.topFiveDrawdownMean,2):'—';
+  return{label:'前5大回撤均值',value:value(m),note:'QQQ '+value(b),
+    title:'取所选区间内最深的 5 次独立回撤，包含区间末尚未修复的回撤。不足 5 次时按实际次数计算。'};
+}
+function renderHistoryMetrics(metrics){
+  $('#history-metrics').innerHTML=metrics.map(({label,value,note,title})=>{
+    const hint=title?` title="${escapeHTML(title)}"`:'';
+    return `<div class="history-metric"${hint}><span>${label}</span><strong>${value}</strong><small>${note}</small></div>`;
+  }).join('');
+}
 function renderRangeMetrics(m,b,note){
   const value=(n,d=1)=>Number.isFinite(n)?fmt(n,d):'—';
-  $('#history-metrics').innerHTML=[{label:'区间年化收益',value:pct(m.cagr),note:`QQQ ${pct(b.cagr)}`},{label:'区间最大回撤',value:pct(m.mdd),note:`QQQ ${pct(b.mdd)}`},{label:'区间夏普比率',value:value(m.sharpe,2),note:`QQQ ${value(b.sharpe,2)}`},{label:'区间年换手率',value:`${value(m.turn_yr)}×`,note}].map(m=>`<div class="history-metric"><span>${m.label}</span><strong>${m.value}</strong><small>${m.note}</small></div>`).join('');
+  renderHistoryMetrics([
+    {label:'区间年化收益',value:pct(m.cagr),note:'QQQ '+pct(b.cagr)},
+    {label:'区间最大回撤',value:pct(m.mdd),note:'QQQ '+pct(b.mdd)},
+    topFiveDrawdownMetric(m,b),
+    {label:'区间夏普比率',value:value(m.sharpe,2),note:'QQQ '+value(b.sharpe,2)},
+    {label:'区间年换手率',value:value(m.turn_yr)+'×',note}
+  ]);
 }
 function renderDrawdownSummary(drawdowns,date,current){
   const el=$('#drawdown-summary');
@@ -216,12 +233,13 @@ function renderHistory() {
   $$('[data-window]').forEach(button=>{const active=button.dataset.window===key;button.classList.toggle('active',active);button.setAttribute('aria-pressed',active);});
   $('#history-title').innerHTML = `${displayName(current)} <span>vs 持有 QQQ</span>`;
   const m=current.metrics[key],b=DATA.benchmark.metrics[key];
-  $('#history-metrics').innerHTML=[
+  renderHistoryMetrics([
     {label:'年化收益',value:pct(m.cagr),note:`QQQ ${pct(b.cagr)}`},
     {label:'最大回撤',value:pct(m.mdd),note:`QQQ ${pct(b.mdd)}`},
+    topFiveDrawdownMetric(m,b),
     {label:'夏普比率',value:fmt(m.sharpe,2),note:`QQQ ${fmt(b.sharpe,2)}`},
     {label:'年换手率',value:`${fmt(m.turn_yr)}×`,note:key==='inSample'?'十年窗 · 样本内':'2007–16 · 半样本外'}
-  ].map(m=>`<div class="history-metric"><span>${m.label}</span><strong>${m.value}</strong><small>${m.note}</small></div>`).join('');
+  ]);
   const range=DATA.windows[key];
   $('#chart-period').textContent=`${range.start} — ${range.end}`;
   const filter=history=>history.filter(p=>p.date>=range.start&&p.date<=range.end);
