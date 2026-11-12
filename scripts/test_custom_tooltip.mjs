@@ -18,5 +18,38 @@ const real=JSON.parse(fs.readFileSync(new URL('../public/custom-inputs.json',imp
 const result=C.run(real,{...registered,cccStressBlueLimitEnabled:true,drawdownGateEnabled:true}),before=JSON.stringify(result);let concise=0,full=0,riskDays=0;
 for(const d of Object.values(result.details.points)){const reasons=H.customReasons(d,result.config);assert.ok(reasons.length>0);full+=d.reasons.join('').length;concise+=reasons.join('').length;if(d.cccStressBlueLimit?.applied||d.drawdownGate?.applied){riskDays++;assert.ok(reasons.some(r=>r.startsWith('CCC波动限仓：')||r.startsWith('回撤闸：')));}}
 assert.equal(JSON.stringify(result),before);assert.ok(concise<full*.4);assert.ok(riskDays>0);
-const app=fs.readFileSync(new URL('../public/app.js',import.meta.url),'utf8');assert.ok(app.includes('drawChart(strategy,benchmark,detail,m.drawdowns,collection,annotations,result.config)'));assert.ok(app.includes('annotations?.readings?.[p.date]),customConfig)'));
+const app=fs.readFileSync(new URL('../public/app.js',import.meta.url),'utf8');assert.ok(app.includes('drawChart(strategy,benchmark,detail,m.drawdowns,collection,annotations,result.config)'));assert.ok(app.includes('annotationsHTML,customConfig,change)'));
 console.log(JSON.stringify({conciseCustomEvidence:true,onlyRelevantLimits:true,ordinaryAndBlueAssetsCorrect:true,datesAndNumbersPreserved:true,originalTooltipsPreserved:true,exportsUnchanged:true,escapedHTML:true,customChartWired:true,textReduction:1-concise/full}));
+
+vm.runInNewContext(fs.readFileSync(new URL('../public/model-annotations.js',import.meta.url),'utf8'),context);
+const M=context.window.ModelAnnotations;
+const trade=(date,type,symbol,extra={})=>({date,type,symbol,signalDate:'2026-06-11',...extra});
+const rotation=[trade('2026-06-09','sell','SOXL'),trade('2026-06-09','buy','TQQQ')];
+const drift=[trade('2026-06-10','reduce','TQQQ',{reason:'rebalancing_band'}),trade('2026-06-11','add','TQQQ',{rebalanceOnly:true})];
+const reversal=[trade(point.date,'sell','TQQQ',{exposureBefore:1,exposureAfter:-1}),trade(point.date,'buy','PSQ',{exposureBefore:1,exposureAfter:-1})];
+const opening=trade('2026-06-15','buy','SOXL');
+const realIncrease=trade('2026-06-16','add','SOXL');
+const details={trades:[...rotation,...drift,...reversal,opening,realIncrease]};
+const snapshot=JSON.stringify(details),all=M.collect(null,details);
+assert.deepEqual(Array.from(all.trades),[reversal[1],reversal[0],opening,realIncrease]);
+assert.deepEqual(Array.from(M.collect(null,details,null,['buy']).trades),[reversal[1],opening]);
+assert.equal(all.counts.reduce,0);
+assert.equal(all.counts.sell,1);
+assert.ok(!all.dates.includes(drift[0].date));
+assert.match(M.tooltipHTML(drift[0].date,all),/沿用原目标/);
+assert.match(M.tooltipHTML(rotation[0].date,all),/卖出 SOXL.*买入 TQQQ/);
+assert.equal(JSON.stringify(details),snapshot);
+
+const change={trade:reversal[0],previous:{state:'常态'}};
+const marked=H.tooltipHTML({date:point.date,value:1},1,point,null,'ready','<div>成交明细</div>',config,change);
+assert.match(marked,/仓位变动原因.*1\.00× → -1\.00×.*常态 → 空心红点.*清仓至BIL.*成交明细/);
+assert.equal(marked.match(/信号依据/g).length,1);
+
+const momentumConfig={...config,asset:'momentum'};
+const momentum=structuredClone(point);
+momentum.momentum={monthlySelection:'SOXX',selection:'QQQ',scores:{},weakness:{locked:true},bond:{active:true},reason:fullRule};
+assert.ok(H.customReasons(momentum,momentumConfig).includes('动量选品：QQQ（SOXX相对走弱、长债过滤）。'));
+momentum.momentum.monthlySelection='QQQ';
+assert.ok(H.customReasons(momentum,momentumConfig).includes('动量选品：QQQ（月度动量）。'));
+assert.equal(momentum.momentum.reason,fullRule);
+console.log(JSON.stringify({sameDirectionSwapsHidden:true,driftHidden:true,reversalsRetained:true,markerCountsAgree:true,reasonShownFirst:true,conciseMomentumEvidence:true}));

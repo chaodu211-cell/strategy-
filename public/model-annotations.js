@@ -22,6 +22,7 @@
   const value=(number,digits=2)=>finite(number)?number.toFixed(digits):'—';
   const percent=number=>finite(number)?`${(number*100).toFixed(2)}%`:'—';
   const inRange=(date,range)=>typeof date==='string'&&date>=range.start&&date<=range.end;
+  const isInverse=trade=>trade.inverse||trade.leverage<0||/^(?:SYN_)?(?:SQQQ|PSQ)$/.test(trade.symbol);
   function filterType(type){
     if(type==='ccc_stress_on'||type==='ccc_stress_off')return 'ccc_stress';
     if(type==='ccc_above_on'||type==='ccc_above_off')return 'ccc_above';
@@ -33,12 +34,29 @@
     const end=interval.origEnd||interval.end;
     return date>=start&&(interval.endExclusive?date<interval.endExclusive:!end||date<=end);
   }
+  function positionTrades(trades){
+    const changed=trades.filter(trade=>!trade.rebalanceOnly&&trade.reason!=='rebalancing_band');
+    const buys=new Set(),sells=new Set();
+    const sideKey=trade=>`${trade.date}:${isInverse(trade)}`;
+    for(const trade of changed){
+      if(trade.type==='buy')buys.add(sideKey(trade));
+      if(trade.type==='sell')sells.add(sideKey(trade));
+    }
+    // A same-direction exit and entry replace the ETF. Opposite directions reverse the position.
+    return changed.filter(trade=>{
+      if(trade.type==='buy')return !sells.has(sideKey(trade));
+      if(trade.type==='sell')return !buys.has(sideKey(trade));
+      return true;
+    });
+  }
   function collect(annotations,details,range,enabledSet){
     annotations=annotations||{};details=details||{};
     range=range||{start:'0000-01-01',end:'9999-12-31'};
     const enabled=enabledSet==null?null:enabledSet instanceof Set?enabledSet:new Set(enabledSet);
     const availableEvents=(annotations.events||[]).filter(event=>BY_TYPE[filterType(event.type)]&&inRange(event.date,range));
-    const availableTrades=(details.trades||[]).filter(trade=>BY_TYPE[trade.type]?.group==='trade'&&inRange(trade.date,range));
+    const executions=(details.trades||[]).filter(trade=>BY_TYPE[trade.type]?.group==='trade'&&inRange(trade.date,range))
+      .sort((a,b)=>a.date.localeCompare(b.date)||a.symbol.localeCompare(b.symbol)||a.type.localeCompare(b.type));
+    const availableTrades=positionTrades(executions);
     const availableIntervals=(annotations.intervals||[]).filter(interval=>{
       if(!BY_TYPE[interval.type]||typeof interval.start!=='string'||interval.start>range.end)return false;
       return interval.endExclusive?interval.endExclusive>range.start:!interval.end||interval.end>=range.start;
@@ -48,12 +66,13 @@
     for(const trade of availableTrades)counts[trade.type]++;
     for(const interval of availableIntervals)counts[interval.type]++;
     const events=availableEvents.filter(event=>enabledEvent(event.type,enabled)).slice().sort((a,b)=>a.date.localeCompare(b.date)||a.type.localeCompare(b.type));
-    const trades=availableTrades.filter(trade=>enabledEvent(trade.type,enabled)).slice().sort((a,b)=>a.date.localeCompare(b.date)||a.symbol.localeCompare(b.symbol)||a.type.localeCompare(b.type));
+    const trades=availableTrades.filter(trade=>enabledEvent(trade.type,enabled));
     const intervals=availableIntervals.filter(interval=>enabledEvent(interval.type,enabled)).map(interval=>({...interval,origStart:interval.start,origEnd:interval.end,clipStart:interval.start<range.start?range.start:interval.start,clipEnd:(interval.endExclusive||interval.end||range.end)>range.end?range.end:(interval.endExclusive||interval.end||range.end)}));
     const dates=new Set(),byDate=Object.create(null);
-    const entry=date=>byDate[date]||(byDate[date]={events:[],trades:[]});
+    const entry=date=>byDate[date]||(byDate[date]={events:[],trades:[],executions:[]});
     for(const event of events){dates.add(event.date);entry(event.date).events.push(event);}
     for(const trade of trades){dates.add(trade.date);entry(trade.date).trades.push(trade);}
+    for(const trade of executions)if(enabledEvent(trade.type,enabled))entry(trade.date).executions.push(trade);
     for(const interval of intervals)for(const date of [interval.start,interval.end,interval.endExclusive])if(inRange(date,range))dates.add(date);
     return {events,trades,intervals,dates:[...dates].sort(),byDate,counts,enabled:enabled===null?TYPES.map(t=>t.id):[...enabled],range:{...range}};
   }
@@ -70,20 +89,22 @@
   function tooltipHTML(date,collected,readings){
     if(!collected)return '';
     const entry=collected.byDate?.[date]||{events:(collected.events||[]).filter(e=>e.date===date),trades:(collected.trades||[]).filter(t=>t.date===date)};
+    const executions=entry.executions??entry.trades;
     const active=(collected.intervals||[]).filter(interval=>intervalActive(interval,date));
-    if(!entry.events.length&&!entry.trades.length&&!active.length)return '';
+    if(!entry.events.length&&!executions.length&&!active.length)return '';
     let html='<section class="annotation-tooltip">';
-    if(entry.trades.length){
+    if(executions.length){
       html+='<div class="annotation-tooltip-title">当日回测实际成交</div><div class="annotation-tooltip-trades">';
-      for(const trade of entry.trades){
-        const inverse=trade.inverse||/^(?:SYN_)?(?:SQQQ|PSQ)$/.test(trade.symbol);
+      for(const trade of executions){
+        const inverse=isInverse(trade);
         const symbol=trade.symbol?.startsWith('SYN_')?`${trade.symbol.slice(4)}（合成）`:trade.symbol;
         html+=`<div class="annotation-trade"><strong>${escape(BY_TYPE[trade.type]?.label||trade.type)} ${escape(symbol)}${inverse?' · 反向ETF':''}</strong><span>${percent(trade.weightBefore)} → ${percent(trade.weightAfter)}</span></div>`;
       }
       html+='</div>';
-      const signalDates=[...new Set(entry.trades.map(t=>t.signalDate).filter(Boolean))];
+      const signalDates=[...new Set(executions.map(t=>t.signalDate).filter(Boolean))];
       html+=`<p class="annotation-tooltip-note">信号日 ${escape(signalDates.join(' / ')||'—')} → ${escape(date)} 收盘成交；权重比较为当日收益后、调仓前后。</p>`;
-      if(entry.trades.some(trade=>trade.rebalanceOnly||trade.reason==='rebalancing_band')){const bands=[...new Set(entry.trades.map(t=>Number(((t.band??.05)*100).toFixed(4))))];html+=`<p class="annotation-tooltip-note">沿用原目标；资金权重漂移触及${bands.join(' / ')}个百分点再平衡带，触发本次调仓。</p>`;}
+      const rebalances=executions.filter(trade=>trade.rebalanceOnly||trade.reason==='rebalancing_band');
+      if(rebalances.length){const bands=[...new Set(rebalances.map(t=>Number(((t.band??.05)*100).toFixed(4))))];html+=`<p class="annotation-tooltip-note">沿用原目标；资金权重漂移触及${bands.join(' / ')}个百分点再平衡带，触发本次调仓。</p>`;}
     }
     if(entry.events.length){
       html+='<div class="annotation-tooltip-title">当日模型标记</div><ul class="annotation-tooltip-events">';

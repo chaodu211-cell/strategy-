@@ -90,7 +90,15 @@
     if(partialGate)reasons.push(`熊市闸门（四类投票）：常态多头 × ${n(detail.bearGate.multiplier)}。`);
     const blueMode=rules.find(r=>r.id==='blue')?.asset??'inherit';
     const usesMomentum=ladder?.selected?(blueMode==='momentum'||(blueMode==='inherit'&&config.asset==='momentum')):config.asset==='momentum';
-    if(usesMomentum&&detail.momentum)reasons.push(detail.momentum.reason);
+    if(usesMomentum&&detail.momentum){
+      const momentum=detail.momentum,filters=[];
+      if(momentum.monthlySelection==='SOXX'){
+        if(momentum.weakness?.locked)filters.push('SOXX相对走弱');
+        if(momentum.bond?.active)filters.push('长债过滤');
+      }
+      const why=filters.join('、')||(momentum.scores?'月度动量':'观察期未满');
+      reasons.push(`动量选品：${momentum.selection}（${why}）。`);
+    }
     const yellow=detail.yellowLock;
     if(rule?.id==='yellow'&&yellow?.locked){
       const u=yellow.unlock||{},checks=[];
@@ -112,22 +120,30 @@
     if(tool)reasons.push(`工具限制：期望 ${tool[1]}，可实现 ${tool[2]}。`);
     return reasons;
   }
-  function tooltipHTML(point, benchmarkValue, detail, drawdowns, loadState,annotationHTML='',customConfig=null) {
+  function tooltipHTML(point, benchmarkValue, detail, drawdowns, loadState,annotationHTML='',customConfig=null,change=null) {
     const landmark = (drawdowns||[]).flatMap((d,i)=>{
       const place=point.date===d.troughDate?'谷底':point.date===d.peakDate?'峰值':'';
       return place?[`第${i+1}大回撤${place}`]:[];
     }).join(' / ');
     let html = `<div class="hover-heading"><strong>${escape(point.date)}</strong>${landmark ? `<em>${landmark}</em>` : ''}</div><div class="hover-nav"><span>策略净值 <b>${multiple(point.value)}</b></span><span>QQQ <b>${multiple(benchmarkValue)}</b></span></div>`;
+    if (!detail) return html + annotationHTML + `<p class="hover-note">${loadState === 'error' ? '历史持仓明细加载失败，可重试刷新页面。' : loadState==='ready'?'此交易日暂无存档持仓明细，可扩大区间查看邻近记录。':'正在加载历史持仓明细…'}</p>`;
+    const reasons=customConfig?customReasons(detail,customConfig):detail.reasons;
+    const reasonList=`<ul class="hover-reasons">${reasons.map(reason => `<li>${escape(reason)}</li>`).join('')}</ul>`;
+    const signalTitle=`信号依据 · ${escape(detail.signalDate)}`;
+    if(change){
+      const {trade,previous}=change;
+      const stateChange=previous?.state&&previous.state!==detail.state?` · ${escape(previous.state)} → ${escape(detail.state)}`:'';
+      html+=`<div class="hover-basis-title">仓位变动原因 · ${signalTitle}</div><div class="hover-exposure">成交敞口 <strong>${multiple(trade.exposureBefore)} → ${multiple(trade.exposureAfter)}</strong>${stateChange}</div>${reasonList}`;
+    }
     html += annotationHTML;
-    if (!detail) return html + `<p class="hover-note">${loadState === 'error' ? '历史持仓明细加载失败，可重试刷新页面。' : loadState==='ready'?'此交易日暂无存档持仓明细，可扩大区间查看邻近记录。':'正在加载历史持仓明细…'}</p>`;
     html += `<div class="hover-position-title"><span>回测收盘持仓</span><b>${escape(detail.state)}</b></div><div class="hover-holdings">`;
     for (const [symbol, weight] of [...detail.holdings, [detail.cash<0?'融资负债':'BIL', detail.cash]]) {
       html += `<div><span>${escape(symbolName(symbol))}</span><strong>${percent(weight)}</strong></div>`;
     }
     html += `</div><div class="hover-exposure">底层敞口 <strong>${multiple(detail.exposure)}</strong></div>`;
     const target = [...detail.targetHoldings, [detail.targetCash<0?'融资负债':'BIL',detail.targetCash]].map(([s,w]) => `${symbolName(s)} ${percent(w)}`).join(' / ');
-    const reasons=customConfig?customReasons(detail,customConfig):detail.reasons;
-    html += `<div class="hover-target">规则目标：${escape(target)}</div><div class="hover-basis-title">信号依据 · ${escape(detail.signalDate)}</div><ul class="hover-reasons">${reasons.map(reason => `<li>${escape(reason)}</li>`).join('')}</ul>`;
+    html += `<div class="hover-target">规则目标：${escape(target)}</div>`;
+    if(!change)html+=`<div class="hover-basis-title">${signalTitle}</div>${reasonList}`;
     const band=Number.isFinite(detail.band)?Number((detail.band*100).toFixed(4)):5;
     html += `<p class="hover-note">${detail.rebalanced ? '当日收盘已按前一交易日信号再平衡。' : `未触发${band}个百分点再平衡带，权重可能随价格浮动。`}<br>回测模拟持仓，非账户实盘持仓。</p>`;
     return html;

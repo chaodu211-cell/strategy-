@@ -132,7 +132,7 @@ function renderAnnotationControls(collection) {
   }
   $$('[data-annotation-filter]').forEach(input=>input.checked=annotationFilters.has(input.dataset.annotationFilter));
   $$('[data-annotation-count]').forEach(el=>{el.textContent=HISTORY_DETAILS?.modelAnnotations?(collection.counts[el.dataset.annotationCount]||0):'—';});
-  $('#annotation-status').textContent=HISTORY_DETAILS?.modelAnnotations?`本区间显示 ${collection.trades.length} 个已成交的仓位变化、${collection.events.length} 个模型标记、${collection.intervals.length} 段信用状态。目标不变的再平衡只在悬停明细展示；CCC信号额外滞后一交易日。`:'正在载入历史特殊点位…';
+  $('#annotation-status').textContent=HISTORY_DETAILS?.modelAnnotations?`本区间显示 ${collection.trades.length} 个仓位变动标记、${collection.events.length} 个模型标记、${collection.intervals.length} 段信用状态。`:'正在载入历史特殊点位…';
 }
 function loadDailyHistory(){
   if(dailyHistoryState!=='idle')return;
@@ -259,7 +259,7 @@ function renderCustomHistory() {
   const customDescriptions={yellow:'最优拟合趋势下跌预警；自定义黄点按已启用的TDC、价格修复或实心蓝点条件解锁，不按持续天数结束。',blue:blueUnlock?'最优拟合实心蓝点；本次设置启用永久解除黄点锁定，解锁与是否实际抄底分开判断。':'最优拟合实心蓝点；本次设置未启用蓝点解除黄点锁定，操作依本次设置。',blue_soft:'最优拟合空心蓝点；不触发实心蓝点永久解锁，仓位依本次设置。'};
   const annotations={...sourceAnnotations,events:(sourceAnnotations.events||[]).map(e=>customDescriptions[e.type]?{...e,description:customDescriptions[e.type]}:e),readings:customReadings};
   const collection=ModelAnnotations.collect(annotations,detail,range,annotationFilters);renderAnnotationControls(collection);
-  $('#annotation-status').textContent=`自定义回测选区：${collection.trades.length} 个已成交的仓位变化、${collection.events.length} 个模型标记。目标不变的再平衡只在悬停明细展示。`;
+  $('#annotation-status').textContent=`自定义回测选区显示 ${collection.trades.length} 个仓位变动标记、${collection.events.length} 个模型标记。`;
   renderDrawdownSummary(m.drawdowns,range.end,m.currentDrawdown);
   drawChart(strategy,benchmark,detail,m.drawdowns,collection,annotations,result.config);
 }
@@ -300,7 +300,7 @@ function annotationMarkup(collection,normalized,plot) {
       else if(trade.type==='sell')shape=`<path d="M${cx-3.8},${cy-3.2} L${cx+3.8},${cy-3.2} L${cx},${cy+4.2} Z" fill="${color}" stroke="${border}" stroke-width=".9"/>`;
       else shape=`<circle cx="${cx}" cy="${cy}" r="3.5" fill="#fff" stroke="${border}" stroke-width="1.2"/><path d="M${cx-2},${cy} L${cx+2},${cy}${trade.type==='add'?` M${cx},${cy-2} L${cx},${cy+2}`:''}" fill="none" stroke="${color}" stroke-width="1.1"/>`;
       trades+=`<g class="portfolio-trade-marker${trade.inverse?' inverse':''}" data-trade-date="${date}" data-trade-type="${trade.type}" data-trade-symbol="${escapeHTML(trade.symbol)}"><path d="M${anchorX},${anchorY} L${cx},${cy}" class="trade-marker-stem"/>${shape}</g>`;
-      targets.push({date,x:cx,y:cy});
+      targets.push({date,x:cx,y:cy,trade:true});
     });
   }
   return{background,tracks,trades,targets};
@@ -354,16 +354,18 @@ function drawChart(series,benchmark,details,drawdowns,collection,annotations,cus
   function showIndex(index,event){
     index=Math.max(0,Math.min(hoverPoints.length-1,index));
     const p=hoverPoints[index],b=bench[HistoryChart.nearestIndex(bench,Date.parse(p.date))];
+    const entry=collection.byDate[p.date],detail=details?.points[p.date];
     $('#hover-line').setAttribute('x1',x(p.date));$('#hover-line').setAttribute('x2',x(p.date));$('#hover-line').setAttribute('visibility','visible');
     $('#hover-dot').setAttribute('cx',x(p.date));$('#hover-dot').setAttribute('cy',y(p.value));$('#hover-dot').setAttribute('visibility','visible');
     if(index!==activeIndex||tooltip.hidden){
-      tooltip.innerHTML='<div class="tooltip-pin-bar"><span>点击图中点位固定详情，可滚动阅读</span><button type="button" data-close-chart-detail aria-label="关闭历史详情">×</button></div>'+HistoryChart.tooltipHTML(p,b.value,details?.points[p.date],drawdowns,historyLoadState,ModelAnnotations.tooltipHTML(p.date,collection,annotations?.readings?.[p.date]),customConfig);
+      const trade=entry?.trades[0],change=trade?{trade,previous:details?.points[trade.signalDate]}:null;
+      const annotationsHTML=ModelAnnotations.tooltipHTML(p.date,collection,annotations?.readings?.[p.date]);
+      tooltip.innerHTML='<div class="tooltip-pin-bar"><span>点击图中点位固定详情，可滚动阅读</span><button type="button" data-close-chart-detail aria-label="关闭历史详情">×</button></div>'+HistoryChart.tooltipHTML(p,b.value,detail,drawdowns,historyLoadState,annotationsHTML,customConfig,change);
       tooltip.scrollTop=0;
     }
     activeIndex=index;tooltip.hidden=false;
-    const entry=collection.byDate[p.date];
     const marksSummary=[...(entry?.trades||[]).map(t=>`${ModelAnnotations.TYPES.find(type=>type.id===t.type)?.label} ${t.symbol}`),...(entry?.events||[]).map(e=>e.label)].join('，');
-    hit.setAttribute('aria-valuenow',index);hit.setAttribute('aria-valuetext',`${p.date}，策略净值 ${fmt(p.value,2)} 倍，${details?.points[p.date]?.state||'持仓明细加载中'}${marksSummary?'，'+marksSummary:''}`);
+    hit.setAttribute('aria-valuenow',index);hit.setAttribute('aria-valuetext',`${p.date}，策略净值 ${fmt(p.value,2)} 倍，${detail?.state||'持仓明细加载中'}${marksSummary?'，'+marksSummary:''}`);
     if(event)placeTooltip(event);
     else {
       const matrix=svg.getScreenCTM();if(matrix){const point=new DOMPoint(x(p.date),y(p.value)).matrixTransform(matrix);placeTooltip({clientX:point.x,clientY:point.y});}
@@ -376,6 +378,7 @@ function drawChart(series,benchmark,details,drawdowns,collection,annotations,cus
     const timestamp=t0+Math.max(0,Math.min(1,(point.x-pad.left)/(width-pad.left-pad.right)))*(t1-t0);
     let index=HistoryChart.nearestIndex(hoverPoints,timestamp);
     const nearby=marks.targets.map(target=>({...target,distance:Math.hypot(target.x-point.x,target.y-point.y)})).filter(target=>target.distance<=8).sort((a,b)=>a.distance-b.distance)[0];
+    hit.style.cursor=nearby?.trade?'pointer':'';
     if(nearby)index=HistoryChart.nearestIndex(hoverPoints,Date.parse(nearby.date));
     showIndex(index,event);
   }
