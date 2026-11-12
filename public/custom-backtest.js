@@ -11,6 +11,8 @@
     {id:'ccc_bot',label:'CCC 见底预警',group:'CCC 利差',days:20,priority:40,action:'ignore',value:1},
     {id:'ccc_stress',label:'信用压力（分位≥95）',group:'CCC 利差',state:true,days:1,priority:70,action:'scale',value:.5},
     {id:'ccc_above',label:'利差高于200日线',group:'CCC 利差',state:true,days:1,priority:50,action:'scale',value:.5},
+    // Keep the existing nine signal-mask positions stable.
+    {id:'triangle',label:'三角',group:'最优拟合',days:10,priority:85,action:'ignore',value:1},
   ].map(Object.freeze));
   const ACTIONS=Object.freeze({ignore:'不响应',flat:'清仓至 BIL',long:'指定多头敞口',short:'指定纳指空头',scale:'常态敞口 × 乘数',blue_ladder:'蓝点分批建仓'});
   const copy=x=>JSON.parse(JSON.stringify(x));
@@ -18,6 +20,15 @@
   const number=x=>Number.isFinite(x)?Number(x.toFixed(6)).toString():'—';
   const FINANCING_RATE=.05;
   const DATE=/^\d{4}-\d{2}-\d{2}$/;
+  const TRIANGLE=RULES.at(-1);
+  const usesTriangle=cfg=>cfg.rules?.some(r=>r.id===TRIANGLE.id&&r.action!=='ignore')===true;
+  function hasTriangleCoverage(series,end){
+    return DATE.test(series?.through||'')&&series.through>=end&&series.events&&
+      typeof series.events==='object'&&!Array.isArray(series.events)&&
+      Object.entries(series.events).every(([day,event])=>DATE.test(day)&&day<=series.through&&
+        DATE.test(event?.blue_date||'')&&event.blue_date<day&&Number.isInteger(event.wait)&&
+        event.wait>=1&&event.wait<=126&&Number.isFinite(event.s41)&&event.s41>0);
+  }
   const yellowDefaults=()=>({tdcEnabled:true,tdcThreshold:60,priceEnabled:true,repairPct:3,blueEnabled:true});
   const MOMENTUM={
     lookback:126,skip:21,frequency:'monthly',buffer:0,
@@ -67,9 +78,10 @@
     if(!['QQQ','SOXX','momentum'].includes(c.asset)||typeof c.allowSynthetic!=='boolean')throw new Error('常态底层设置无效。');
     const bound=(x,min,max,label,integer=false)=>{if(typeof x!=='number'||!Number.isFinite(x)||x<min||x>max||(integer&&!Number.isInteger(x)))throw new Error(`${label}须为 ${min}–${max}${integer?' 的整数':' 之间的数值'}。`);};
     bound(c.baseExposure,0,3,'常态敞口');bound(c.band,0,.25,'再平衡带');bound(c.costMultiplier,0,5,'成本倍数');
-    if(!Array.isArray(c.rules)||c.rules.length!==RULES.length||new Set(c.rules.map(r=>r.id)).size!==RULES.length)throw new Error('每个预警须有且仅有一条设置。');
+    if(!Array.isArray(c.rules)||c.rules.some(r=>!r)||new Set(c.rules.map(r=>r.id)).size!==c.rules.length||
+      c.rules.some(r=>!RULES.some(known=>known.id===r.id)))throw new Error('每个预警须有且仅有一条设置。');
     c.rules=RULES.map(r=>{
-      const rule=c.rules.find(x=>x.id===r.id);if(!rule||!Object.hasOwn(ACTIONS,rule.action))throw new Error(`${r.label}操作无效。`);
+      const rule=c.rules.find(x=>x.id===r.id)??(r===TRIANGLE?TRIANGLE:null);if(!rule||!Object.hasOwn(ACTIONS,rule.action))throw new Error(`${r.label}操作无效。`);
       if(rule.action==='blue_ladder'&&r.id!=='blue')throw new Error('分批建仓只适用于实心蓝点。');
       if(rule.action==='blue_ladder'){if(typeof rule.value!=='number'||!Number.isFinite(rule.value)||rule.value<0)throw new Error('蓝点 x 须为非负有限数，不设人为上限。');}
       else bound(rule.value,0,3,r.label+'敞口/乘数');if(!r.conditional)bound(rule.days,1,252,r.label+'持续交易日',true);bound(rule.priority,1,99,r.label+'优先级',true);
@@ -92,6 +104,7 @@
       }
       return{id:r.id,action:rule.action,value:rule.value,...(r.conditional?{unlock}:{days:rule.action==='blue_ladder'?40:rule.days}),priority:rule.priority,...(r.id==='ccc_top'?{stackWithCredit}:{}),...(r.id==='blue'?{steps,onlyIfNotLower,asset}:{})};
     });
+    if(data&&usesTriangle(c)&&!hasTriangleCoverage(data.vixTermRelease,c.end))throw new Error('三角（VIX 倒挂解除）信号未覆盖所选回测结束日。');
     const method=c.momentum?.method;
     if(method!==undefined&&(typeof method!=='string'||!Object.hasOwn(MOMENTUM_METHODS,method)))throw new Error('动量选品方法无效。');
     if(usesMomentum(c)||c.momentum===undefined||method!==undefined)c.momentum=momentumDefaults(method);
@@ -100,7 +113,12 @@
   function resolveTarget(data,cfg,t,last){
     const drawdownGate=cfg.drawdownGateEnabled?advanceDrawdownGate(data,t,last):null;
     const mask=data.signals[t];
-    RULES.forEach((r,i)=>{if(mask&(1<<i))last[i]=t;});
+    RULES.forEach((r,i)=>{
+      const triggered=r===TRIANGLE
+        ? cfg.rules[i].action!=='ignore'&&Object.hasOwn(data.vixTermRelease?.events??{},data.dates[t])
+        : mask&(1<<i);
+      if(triggered)last[i]=t;
+    });
     const yellowRule=cfg.rules[4],unlock={...yellowDefaults(),...yellowRule.unlock};
     const memory=last.yellowLock||(last.yellowLock={locked:false,triggerIndex:null,releaseIndex:null,releaseReason:null});
     const tdc=data.yellowContext?.tdc?.[t],dd52=data.yellowContext?.qqqDrawdown52?.[t];
@@ -115,7 +133,7 @@
       if(matched.length){memory.locked=false;memory.releaseIndex=t;memory.releaseReason=matched.join('；');}
     }
     const yellowLock={locked:memory.locked,triggerDate:memory.triggerIndex===null?null:data.dates[memory.triggerIndex],releaseDate:memory.releaseIndex===null?null:data.dates[memory.releaseIndex],releaseReason:memory.releaseReason,tdc:finite(tdc)?tdc:null,qqqDrawdown52:finite(dd52)?dd52:null,unlock:{...unlock}};
-    const active=RULES.map((r,i)=>({...cfg.rules[i],label:r.label,index:i,sourceIndex:last[i],state:!!r.state,active:r.conditional?memory.locked:r.state?!!(mask&(1<<i)):t-last[i]<(cfg.rules[i].action==='blue_ladder'?40:cfg.rules[i].days)})).filter(r=>r.active&&r.action!=='ignore').sort((a,b)=>b.priority-a.priority||a.index-b.index);
+    const active=RULES.map((r,i)=>({...cfg.rules[i],label:r.label,index:r===TRIANGLE?2.5:i,sourceIndex:last[i],state:!!r.state,active:r.conditional?memory.locked:r.state?!!(mask&(1<<i)):t-last[i]<(cfg.rules[i].action==='blue_ladder'?40:cfg.rules[i].days)})).filter(r=>r.active&&r.action!=='ignore').sort((a,b)=>b.priority-a.priority||a.index-b.index);
     const blueAsset=cfg.rules[2].asset??'inherit';
     const momentum=usesMomentum(cfg)?momentumChoice(data,t,last,cfg.momentum?.method):null;
     const defaultAsset=cfg.asset==='momentum'?momentum.selection:cfg.asset;
@@ -390,7 +408,7 @@
     return{cagr:(history.at(-1).nav/history[0].nav)**(1/years)-1,mdd:max.value,sharpe:vol>0?mean*252/vol:null,vol,mult:history.at(-1).nav/history[0].nav,turn_yr:sum(turnover.slice(1))/years,drawdown:max};
   }
   function run(data,input){
-    if(data?.schemaVersion!==1||!Array.isArray(data.dates)||!data.symbols?.some(s=>s.symbol==='BIL')||RULES.some((r,i)=>data.signalTypes?.[i]!==r.id))throw new Error('自定义回测数据不完整，请刷新重试。');
+    if(data?.schemaVersion!==1||!Array.isArray(data.dates)||!data.symbols?.some(s=>s.symbol==='BIL')||RULES.some((r,i)=>r!==TRIANGLE&&data.signalTypes?.[i]!==r.id))throw new Error('自定义回测数据不完整，请刷新重试。');
     const cfg=validate(input,data),start=data.dates.findIndex(d=>d>=cfg.start),end=data.dates.findLastIndex(d=>d<=cfg.end);
     if(start<1||end<=start)throw new Error('所选日期内至少需要两个交易日。');
     if(cfg.rules[4].action!=='ignore'&&(cfg.rules[4].unlock.tdcEnabled||cfg.rules[4].unlock.priceEnabled)&&(!data.yellowContext||data.yellowContext.tdc?.length!==data.dates.length||data.yellowContext.qqqDrawdown52?.length!==data.dates.length))throw new Error('缺少黄点条件解锁的TDC或QQQ修复历史，请刷新页面重试。');
@@ -442,5 +460,5 @@
     return{config:cfg,range:{start:data.dates[start],end:data.dates[end]},history,benchmark,metrics,benchmarkMetrics,details:{points,trades},audit:{inputHash:data.meta.inputHash,...(data.meta.dgs30CSVHash?{dgs30CSVHash:data.meta.dgs30CSVHash}:{}),days:history.length,bearGateDays,bearGateAppliedDays,drawdownGateDays,drawdownGateAppliedDays,cccStressBlueLimitDays,limitedDays,syntheticDays,rebalanceDays,costPaid,financingDays,financingInterestPaid,financingAnnualRate:FINANCING_RATE},sourceMeta:copy(data.meta)};
   }
   function readings(data){return Object.fromEntries(data.dates.map((d,i)=>{const v=data.readings[i],mask=data.signals[i];return[d,{temperature:v[0],tdc:v[1],creditSpread:v[2],creditMA200:v[3],creditPercentile:v[4],creditSourceDate:v[5],creditStress:!!(mask&(1<<7)),creditAbove:!!(mask&(1<<8))}];}));}
-  root.CustomBacktest=Object.freeze({RULES,ACTIONS,MOMENTUM_METHODS,DEFAULT_MOMENTUM_METHOD,BEAR_GATE_METHODS,DEFAULT_BEAR_GATE_METHOD,bearGateEnsemble,defaults,validate,usesMomentum,usesDgs30,resolveTarget,bearGate200,momentumChoice,stats,run,readings});
+  root.CustomBacktest=Object.freeze({RULES,ACTIONS,MOMENTUM_METHODS,DEFAULT_MOMENTUM_METHOD,BEAR_GATE_METHODS,DEFAULT_BEAR_GATE_METHOD,bearGateEnsemble,defaults,validate,usesMomentum,usesDgs30,usesTriangle,hasTriangleCoverage,resolveTarget,bearGate200,momentumChoice,stats,run,readings});
 })(typeof window!=='undefined'?window:globalThis);

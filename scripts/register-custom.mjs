@@ -45,7 +45,11 @@ async function replayPrevious(old,current,targets){
 }
 const source=await readFile(args.settings),document=JSON.parse(source),panel=await read('public/custom-inputs.json');
 if(document.inputHash!==panel.meta.inputHash)throw new Error('设置导出的研究输入哈希与本站不一致。');
-const custom=C.validate({...document.config,name:args.name},panel);
+const config=await read('tracking/config.json'),previous=await read('tracking/state.json');
+if(C.usesTriangle(document.config)||C.usesTriangle(config.custom))panel.vixTermRelease=await read('public/vix-term-release.json');
+const validated=C.validate({...document.config,name:args.name},panel);
+const hasTriangleRule=document.config.rules.some(r=>r.id==='triangle');
+const custom=hasTriangleRule?validated:{...validated,rules:validated.rules.filter(r=>r.id!=='triangle')};
 const sourceCopy=structuredClone(document.config);sourceCopy.name=args.name;
 if(C.usesDgs30(custom)){
   const rates=await read('public/dgs30.json');
@@ -56,7 +60,6 @@ if(C.usesDgs30(custom)){
 if(!isDeepStrictEqual(sourceCopy,custom))throw new Error('文件参数未完整保留。');
 const backtest=C.run(panel,custom);
 for(const key of ['cagr','mdd','mult','sharpe','turn_yr'])if(document.metrics?.[key]!==undefined&&Math.abs(backtest.metrics[key]-document.metrics[key])>1e-9)throw new Error('文件回测指标未复现 '+key);
-const config=await read('tracking/config.json'),previous=await read('tracking/state.json');
 const previousCustom=C.validate({...config.custom,rules:config.custom.rules.map(r=>r.id==='blue'?{...r,onlyIfNotLower:r.onlyIfNotLower??false}:r.id==='ccc_top'?{...r,stackWithCredit:r.stackWithCredit??false}:r.id==='yellow'?{...r,unlock:{...r.unlock,blueEnabled:r.unlock?.blueEnabled??false}}:r)},panel);
 const result=registerCustomVersion(previous,config,custom,{id:args.id,startDate:args.start,registeredAt:args.at,sourceSettingsFile:basename(args.settings),sourceSettingsSHA256:createHash('sha256').update(source).digest('hex'),previousCustom});
 if(result.idempotent){console.log(JSON.stringify({idempotent:true,id:args.id}));process.exit(0);}
@@ -69,6 +72,10 @@ if(C.usesDgs30(custom)){
   result.audit.dgs30CSVHash=document.audit.dgs30CSVHash;
 }
 panel.meta.end=panel.dates.at(-1);
+if(C.usesTriangle(custom)){
+  const live=await read('public/daily-live.json');
+  if(C.hasTriangleCoverage(live.vixTermRelease,panel.meta.end))panel.vixTermRelease=live.vixTermRelease;
+}
 const resolved=C.validate({...custom,end:panel.meta.end},panel),memory=C.RULES.map(()=>-1e9);
 const old=previous.strategies.find(s=>s.id===(config.customId||'custom-momentum'));
 const replayDates=new Set(args['replay-previous']==='true'?old?.points.map(p=>p.signalDate):[]);

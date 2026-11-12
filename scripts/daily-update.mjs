@@ -21,6 +21,7 @@ state.configHash=configHash;
 let status={checkedAt,status:'pending',message:'等待完整的ETF收盘行情与两个模型输入。',sources:[],warnings:[]};
 let live=null,market,remote;
 const [base,seed,prior]=await Promise.all([read('public/data.json'),read('lib/live-seed.json'),read('public/daily-live.json').catch(()=>null)]);
+let vixTermRelease=prior?.vixTermRelease;
 const version=seed.researchVersion;
 const sameRelease=prior?.data?.meta?.researchVersion===version;
 try{
@@ -34,6 +35,8 @@ try{
     return fetch(url,{...options,headers});
   };
   remote=await loadRemoteSources(nativeFetch,market);
+  const observedTriangle=remote.best?.data?.vix_term_release;
+  if(C.hasTriangleCoverage(observedTriangle,vixTermRelease?.through??'2006-01-01'))vixTermRelease=observedTriangle;
   const observedAt=new Date().toISOString();
   const evidence={observedAt,marketFetchedAt:market.fetchedAt,sources:remote.sources,modelRows:remote.rows.filter(r=>r.date>(state.checkpoint?.date||'2026-10-22')),marketRows:market.rows.filter(r=>r.date>=(state.strategies.map(s=>s.lastDate).filter(Boolean).sort()[0]||config.startDate))};
   const sourceHash=hash(evidence);
@@ -80,14 +83,21 @@ try{
     // Registered v1 rules predate the comparison switch; pin their original behavior.
     // Browser defaults can change without silently changing a running strategy version.
     const registered={...config.custom,rules:config.custom.rules.map(r=>r.id==='blue'?{...r,onlyIfNotLower:r.onlyIfNotLower??false}:r.id==='ccc_top'?{...r,stackWithCredit:r.stackWithCredit??false}:r.id==='yellow'?{...r,unlock:{...r.unlock,blueEnabled:r.unlock?.blueEnabled??false}}:r)};
-    const custom=C.validate({...registered,end:panel.meta.end},panel),memory=C.RULES.map(()=>-1e9);let latest;
-    if(C.usesDgs30(custom)){
-      panel.dgs30=(await read('public/dgs30.json')).yieldsBp;
-      const warning=await extendDgs30(panel,extra);
-      if(warning)status.warnings.push(warning);
+    if(C.usesTriangle(registered)){
+      panel.vixTermRelease=vixTermRelease??await read('public/vix-term-release.json');
     }
-    for(let t=0;t<panel.dates.length;t++)latest=C.resolveTarget(panel,custom,t,memory);
-    targets[config.customId||'custom-momentum']={configVersion:hash(config.custom),signalDate:panel.dates.at(-1),weights:Object.fromEntries(panel.symbols.map((s,j)=>[s.symbol,latest.weights[j]]).filter(([,w])=>w!==0)),selection:latest.selection,state:latest.state,reasons:latest.reasons};
+    if(C.usesTriangle(registered)&&!C.hasTriangleCoverage(panel.vixTermRelease,panel.meta.end)){
+      status.warnings.push('三角信号尚未覆盖最新信号日，已登记自定义策略暂缓产生新目标。');
+    }else{
+      const custom=C.validate({...registered,end:panel.meta.end},panel),memory=C.RULES.map(()=>-1e9);let latest;
+      if(C.usesDgs30(custom)){
+        panel.dgs30=(await read('public/dgs30.json')).yieldsBp;
+        const warning=await extendDgs30(panel,extra);
+        if(warning)status.warnings.push(warning);
+      }
+      for(let t=0;t<panel.dates.length;t++)latest=C.resolveTarget(panel,custom,t,memory);
+      targets[config.customId||'custom-momentum']={configVersion:hash(config.custom),signalDate:panel.dates.at(-1),weights:Object.fromEntries(panel.symbols.map((s,j)=>[s.symbol,latest.weights[j]]).filter(([,w])=>w!==0)),selection:latest.selection,state:latest.state,reasons:latest.reasons};
+    }
     state=queueTargets(state,targets,new Date().toISOString());
   }
   const warnings=[...new Set([...status.warnings,...remote.warnings])];
@@ -119,6 +129,7 @@ if(market){
 live??=sameRelease?prior:{data:base,monitor:{pollSeconds:60,sources:status.sources,portfolioDate:base.meta.signalDate}};
 if(live){
   live.researchHistory=researchHistory;
+  if(vixTermRelease)live.vixTermRelease=vixTermRelease;
   live.monitor={...live.monitor,checkedAt,status:status.status,warnings:status.warnings};
 }
 state.lastCheck=status;
