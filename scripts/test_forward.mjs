@@ -6,6 +6,7 @@ import './test_blue_asset.mjs';
 import './test_credit_stack.mjs';
 import './test_bear200.mjs';
 import './test_bear_ensemble.mjs';
+import './test_vix_reversal.mjs';
 import './test_drawdown_gate.mjs';
 import './test_ccc_stress_blue_limit.mjs';
 import './test_blue_unlock.mjs';

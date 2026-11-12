@@ -87,7 +87,7 @@ try{
       panel.vixTermRelease=vixTermRelease??await read('public/vix-term-release.json');
     }
     if(C.usesTriangle(registered)&&!C.hasTriangleCoverage(panel.vixTermRelease,panel.meta.end)){
-      status.warnings.push('三角信号尚未覆盖最新信号日，已登记自定义策略暂缓产生新目标。');
+      status.warnings.push('vix反转信号尚未覆盖最新信号日，已登记自定义策略暂缓产生新目标。');
     }else{
       const custom=C.validate({...registered,end:panel.meta.end},panel),memory=C.RULES.map(()=>-1e9);let latest;
       if(C.usesDgs30(custom)){
@@ -96,7 +96,7 @@ try{
         if(warning)status.warnings.push(warning);
       }
       for(let t=0;t<panel.dates.length;t++)latest=C.resolveTarget(panel,custom,t,memory);
-      targets[config.customId||'custom-momentum']={configVersion:hash(config.custom),signalDate:panel.dates.at(-1),weights:Object.fromEntries(panel.symbols.map((s,j)=>[s.symbol,latest.weights[j]]).filter(([,w])=>w!==0)),selection:latest.selection,state:latest.state,reasons:latest.reasons};
+      targets[config.customId||'custom-momentum']={configVersion:hash(config.custom),signalDate:panel.dates.at(-1),weights:Object.fromEntries(panel.symbols.map((s,j)=>[s.symbol,latest.weights[j]]).filter(([,w])=>w!==0)),selection:latest.selection,state:latest.state,reasons:latest.reasons,...(latest.vixReversalSignalDate?{vixReversalSignalDate:latest.vixReversalSignalDate}:{})};
     }
     state=queueTargets(state,targets,new Date().toISOString());
   }

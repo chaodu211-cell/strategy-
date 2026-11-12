@@ -12,7 +12,7 @@
     {id:'ccc_stress',label:'信用压力（分位≥95）',group:'CCC 利差',state:true,days:1,priority:70,action:'scale',value:.5},
     {id:'ccc_above',label:'利差高于200日线',group:'CCC 利差',state:true,days:1,priority:50,action:'scale',value:.5},
     // Keep the existing nine signal-mask positions stable.
-    {id:'triangle',label:'三角',group:'最优拟合',days:10,priority:85,action:'scale',value:1},
+    {id:'triangle',label:'vix反转',group:'最优拟合',days:10,priority:85,action:'scale',value:1},
   ].map(Object.freeze));
   const ACTIONS=Object.freeze({ignore:'不响应',flat:'清仓至 BIL',long:'指定多头敞口',short:'指定纳指空头',scale:'常态敞口 × 乘数',blue_ladder:'蓝点分批建仓'});
   const copy=x=>JSON.parse(JSON.stringify(x));
@@ -22,6 +22,10 @@
   const DATE=/^\d{4}-\d{2}-\d{2}$/;
   const TRIANGLE=RULES.at(-1);
   const LEGACY_TRIANGLE={...TRIANGLE,action:'ignore'};
+  const isVixBottomFishing=rule=>rule?.id===TRIANGLE.id&&rule.action==='scale';
+  const canFinance=rule=>rule?.action==='blue_ladder'||isVixBottomFishing(rule);
+  const limitRuleExposure=(rule,exposure)=>canFinance(rule)?exposure:Math.max(-3,Math.min(3,exposure));
+  const actionLabel=(id,action)=>isVixBottomFishing({id,action})?'抄底仓位（常态敞口 × n）':ACTIONS[action];
   const ruleValueMax=(id,action)=>id===TRIANGLE.id&&['scale','flat','ignore'].includes(action)?10:3;
   const usesTriangle=cfg=>cfg.rules?.some(r=>r.id===TRIANGLE.id&&r.action!=='ignore')===true;
   function hasTriangleCoverage(series,end){
@@ -107,7 +111,7 @@
       }
       return{id:r.id,action:rule.action,value:rule.value,...(r.conditional?{unlock}:{days:rule.action==='blue_ladder'?40:rule.days}),priority:rule.priority,...(r.id==='ccc_top'?{stackWithCredit}:{}),...(r.id==='blue'?{steps,onlyIfNotLower,asset}:{})};
     });
-    if(data&&usesTriangle(c)&&!hasTriangleCoverage(data.vixTermRelease,c.end))throw new Error('三角（VIX 倒挂解除）信号未覆盖所选回测结束日。');
+    if(data&&usesTriangle(c)&&!hasTriangleCoverage(data.vixTermRelease,c.end))throw new Error('vix反转信号未覆盖所选回测结束日。');
     const method=c.momentum?.method;
     if(method!==undefined&&(typeof method!=='string'||!Object.hasOwn(MOMENTUM_METHODS,method)))throw new Error('动量选品方法无效。');
     if(usesMomentum(c)||c.momentum===undefined||method!==undefined)c.momentum=momentumDefaults(method);
@@ -155,37 +159,36 @@
     const stackLabel=creditStack?`${top.label} × ${creditState.label}`:null;
     const rawRuleExposure=r=>stackApplies(r)?creditStack.target:!r?cfg.baseExposure:r.action==='flat'?0:r.action==='long'?r.value:r.action==='short'?-r.value:r.action==='blue_ladder'?blueLadder.target:cfg.baseExposure*r.value;
     const bearGate=cfg.bearGateEnabled?((cfg.bearGateMethod??'ma200')==='ensemble'?bearGateEnsemble(data,t):bearGate200(data,t)):null;
-    // Match fitted-aggressive bear_mult=0 on the ordinary long channel.
-    // Yellow's dedicated configuration, inverse positions and blue bottom-fishing
-    // are separate channels, so the gate is not a global liquidation override.
-    const gateApplies=r=>bearGate?.active&&r?.id!=='yellow'&&r?.id!=='blue'&&rawRuleExposure(r)>0;
+    // The bear gate applies to ordinary long exposure. Bottom-fishing entries bypass it.
+    const gateApplies=r=>bearGate?.active&&r?.id!=='yellow'&&r?.id!=='blue'&&r?.id!==TRIANGLE.id&&rawRuleExposure(r)>0;
     const beforeBrake=r=>gateApplies(r)?rawRuleExposure(r)*bearGate.multiplier:rawRuleExposure(r);
     const brakeApplies=r=>drawdownGate?.active&&r?.id!=='yellow'&&r?.id!=='blue'&&beforeBrake(r)>0;
     const ruleExposure=r=>brakeApplies(r)?Math.min(3,beforeBrake(r))*.5:beforeBrake(r);
-    const ordinaryExposure=r=>Math.max(-3,Math.min(3,ruleExposure(r)));
+    const comparisonExposure=r=>limitRuleExposure(r,ruleExposure(r));
     const baseline=active.find(r=>r.id!=='blue'),blue=active.find(r=>r.id==='blue'&&['blue_ladder','long','scale'].includes(r.action));
-    if(bearGate){bearGate.baselineBefore=Math.max(-3,Math.min(3,rawRuleExposure(baseline)));bearGate.baselineAfter=ordinaryExposure(baseline);bearGate.baselineGated=!!gateApplies(baseline);}
-    if(drawdownGate){drawdownGate.baselineBefore=Math.max(-3,Math.min(3,beforeBrake(baseline)));drawdownGate.baselineAfter=ordinaryExposure(baseline);}
+    if(bearGate){bearGate.baselineBefore=limitRuleExposure(baseline,rawRuleExposure(baseline));bearGate.baselineAfter=comparisonExposure(baseline);bearGate.baselineGated=!!gateApplies(baseline);}
+    if(drawdownGate){drawdownGate.baselineBefore=limitRuleExposure(baseline,beforeBrake(baseline));drawdownGate.baselineAfter=comparisonExposure(baseline);}
     let blueComparison=null;
     if(blue){
-      const blueExposure=blue.action==='blue_ladder'?ruleExposure(blue):ordinaryExposure(blue),baselineExposure=ordinaryExposure(baseline);
+      const blueExposure=comparisonExposure(blue),baselineExposure=comparisonExposure(baseline);
       const eligible=blueExposure+1e-12*Math.max(1,Math.abs(blueExposure),Math.abs(baselineExposure))>=baselineExposure;
       blueComparison={enabled:blue.onlyIfNotLower!==false,blueExposure,baselineExposure,baselineState:bearGate?.baselineGated?'熊市闸门后的'+(stackApplies(baseline)?stackLabel:baseline?.label||'常态'):stackApplies(baseline)?stackLabel:baseline?.label||'常态',baselineRule:baseline?.id||null,eligible,selected:false};
     }
     const applicable=active.filter(r=>!(r===blue&&blueComparison?.enabled&&!blueComparison.eligible));
-    const winner=applicable[0];
+    const winner=applicable[0],vixBottomFishing=isVixBottomFishing(winner);
     if(bearGate)bearGate.applied=!!gateApplies(winner);
     if(drawdownGate)drawdownGate.applied=!!brakeApplies(winner);
     if(creditStack)creditStack.selected=!!stackApplies(winner);
     let state=bearGate?.applied&&bearGate.multiplier===0?'熊市闸门':creditStack?.selected?stackLabel:winner?.label||'常态';
+    if(vixBottomFishing)state+=' · 抄底仓位';
     if(bearGate?.applied&&bearGate.multiplier>0)state+=' · 熊市闸门×'+Number(bearGate.multiplier.toFixed(2));
     if(drawdownGate?.applied)state+=' · 回撤闸';
     if(blueLadder){blueLadder.selected=winner===ladder;if(blueLadder.selected)selection=ladderAsset;}
     if(blueComparison)blueComparison.selected=winner===blue;
     desired=ruleExposure(winner);
     const requested=desired;
-    const financeAllowed=winner?.action==='blue_ladder';
-    if(!financeAllowed)desired=Math.max(-3,Math.min(3,desired));
+    const financeAllowed=canFinance(winner);
+    desired=limitRuleExposure(winner,desired);
     const candidates=data.symbols.map((s,i)=>({...s,index:i})).filter(s=>{
       if(!(data.tradable[t]&(1<<s.index))||s.symbol==='BIL'||(!cfg.allowSynthetic&&s.synthetic))return false;
       return desired<0?s.leverage<0:s.leverage>0&&s.underlying===selection;
@@ -204,7 +207,9 @@
       weights[bil]=1-sum(weights.filter((_,j)=>j!==bil));
       state+=' · CCC压力位蓝点限制';
     }
-    const action=winner?`${winner.label}：${ACTIONS[winner.action]}${!['flat','ignore'].includes(winner.action)?' '+number(winner.value)+(winner.action==='scale'?'':'×'):''}`:`常态：${selection} ${number(cfg.baseExposure)}×`;
+    const action=vixBottomFishing
+      ? `${winner.label}：抄底仓位，常态敞口 ${number(cfg.baseExposure)} 倍 × ${number(winner.value)} = ${number(rawRuleExposure(winner))} 倍`
+      : winner?`${winner.label}：${ACTIONS[winner.action]}${!['flat','ignore'].includes(winner.action)?' '+number(winner.value)+(winner.action==='scale'?'':'×'):''}`:`常态：${selection} ${number(cfg.baseExposure)}×`;
     const reasons=[winner?`${action}。${winner.id==='yellow'?'锁定至解锁条件满足，不按天数到期':winner.state?'条件保持时生效':`信号日 ${data.dates[winner.sourceIndex]}，有效 ${winner.days} 个交易日（含信号日）`}；优先级 ${winner.priority}。`:`当前无已启用的预警规则生效，按常态 ${selection} ${number(cfg.baseExposure)} 倍配置。`];
     if(bearGate?.method==='ensemble'){
       const b=bearGate,f=b.families;
@@ -215,6 +220,7 @@
       const status=!b.ready?`可用 ${b.count} 个复权收盘数据，须完整221个交易日以比较当前200日均线与21个交易日前均线；当前不触发。`:`QQQ收盘 / 200日均线 = ${number(b.priceToMA*100)}%；当前均线 / 21个交易日前均线 = ${number(b.maToPastMA*100)}%。${b.active?'两项均低于100%，闸门条件命中。':'未同时低于100%，闸门未触发。'}`;
       reasons.unshift(`熊市闸门（同拟合·进取）：${status}${b.active?` 常态多头乘数为0；比较基准 ${number(b.baselineBefore)}× → ${number(b.baselineAfter)}×。${b.applied?'本次常态多头归零，余款持有BIL。':'本次采用独立配置或原目标已非多头。'}`:''} 黄点锁仓配置与空头配置保留；蓝点抄底仍按敞口比较及自定义优先级执行。次一交易日收盘成交；任一熊市条件不再满足即解除，其他规则状态继续更新。`);
     }
+    if(vixBottomFishing)reasons.push('抄底仓位首次生效时，次一交易日收盘一次性调整至目标。熊市闸门跳过该仓位。');
     if(creditStack){
       const c=creditStack;
       const explanation=`CCC见顶累乘${c.selected?'生效':'候选（本次未采用）'}：常态敞口 ${number(cfg.baseExposure)} × 见顶乘数 ${number(c.topMultiplier)} × ${c.creditLabel}乘数 ${number(c.creditMultiplier)} = ${number(c.target)}× 底层敞口。见顶信号日 ${c.topSignalDate}，有效 ${c.days} 个交易日（含信号日）；信用状态按当日条件。信用压力与高于200日线同时生效时只选优先级最高的一条，同级按表格顺序；组合以两条规则中较高的优先级 ${c.priority} 与其他规则比较。`;
@@ -243,10 +249,11 @@
       reasons.push(`CCC压力位蓝点限制：${c.active?'CCC极端压力（252日分位≥95）成立':'CCC极端压力未成立，本层不限制'}；监测当日默认标的（常态底层）${c.monitorAsset} 的10日年化实现波动率 ${vol}（复权日收益样本标准差 × √252，含信号日）。${c.active&&c.ready?`多头上限 min(3, 50% / ${vol}) = ${number(c.cap)}×；本层前目标 ${number(c.originalExposure)}× → 最终目标 ${number(c.exposure)}×。${c.applied?'已限制最终多头，蓝点优先级也不能越过此上限。':'原目标无需降低。'}`:''} 压力解除即撤除此上限，目标回到其他规则结果，不等待账户净值修复；实际成交仍按次一交易日收盘及再平衡带执行。`);
     }
     const finalWeight=tool?weights[tool.index]:0;
-    if(finalWeight>1)reasons.push(`蓝点融资持有：${tool.symbol}目标资金权重 ${number(finalWeight*100)}%，超出自有资金的 ${number((finalWeight-1)*100)}% 记为融资负债；年利率固定5%，按实际日历天数/365计息，利息计入负债。`);
+    if(finalWeight>1)reasons.push(`${vixBottomFishing?'vix反转':'蓝点'}融资持有：${tool.symbol}目标资金权重 ${number(finalWeight*100)}%，超出自有资金的 ${number((finalWeight-1)*100)}% 记为融资负债；年利率固定5%，按实际日历天数/365计息，利息计入负债。`);
     if(tool?.synthetic)reasons.push(`${tool.symbol} 为研究合成序列，不是当时已上市ETF。`);
     if(drawdownGate)last.drawdownGate.prevWeights=weights.map((w,j)=>j===bil?0:w);
-    return{weights,exposure,drawdownGate,desired:requested,selection,momentum,blueLadder,blueComparison,creditStack,bearGate,cccStressBlueLimit,yellowLock,winner:winner?.id||null,state,reasons,limited,synthetic:!!tool?.synthetic};
+    const vixReversalSignalDate=vixBottomFishing&&exposure>0?data.dates[winner.sourceIndex]:null;
+    return{weights,exposure,vixReversalSignalDate,drawdownGate,desired:requested,selection,momentum,blueLadder,blueComparison,creditStack,bearGate,cccStressBlueLimit,yellowLock,winner:winner?.id||null,state,reasons,limited,synthetic:!!tool?.synthetic};
   }
   function advanceDrawdownGate(data,t,last){
     const m=last.drawdownGate||(last.drawdownGate={nav:1,peak:1,active:false,prevWeights:null,triggerDate:null,releaseDate:null});
@@ -430,13 +437,16 @@
       let nav=sum(h);if(!(nav>0)||!Number.isFinite(nav))throw new Error(`${date} 净值已耗尽、为非正数或发生数值溢出，回测终止；不会将结果截为正净值。`);
       const before=h.map(v=>v/nav),delta=target.weights.map((v,j)=>Math.abs(v-before[j]));
       const reasons=target.reasons.slice();
-      if(t>start&&(Math.max(...delta)>cfg.band+1e-12||target.weights.some((v,j)=>(v>1e-9)!==(before[j]>1e-9)))){
+      const previousTarget=targets[Math.max(0,t-2)];
+      const enterVixPosition=target.vixReversalSignalDate&&
+        target.vixReversalSignalDate!==previousTarget.vixReversalSignalDate&&delta.some(d=>d>1e-9);
+      if(t>start&&(enterVixPosition||Math.max(...delta)>cfg.band+1e-12||target.weights.some((v,j)=>(v>1e-9)!==(before[j]>1e-9)))){
         const cost=sum(delta.map((d,j)=>d*(j===bil&&(before[bil]<0||target.weights[bil]<0)?0:data.costs[t][j])*cfg.costMultiplier));
         if(!Number.isFinite(cost)||cost>=1)throw new Error(`${date} 交易成本导致资产耗尽或数值溢出，回测终止。`);
         costPaid+=nav*cost;nav*=1-cost;h=target.weights.map(v=>v*nav);rebalanced=true;turn=sum(delta)/2;rebalanceDays++;
       }
       const weights=h.map(v=>v/nav),exposure=sum(weights.map((w,j)=>w*data.symbols[j].leverage));
-      const rebalanceOnly=target.weights.every((w,j)=>Math.abs(w-targets[Math.max(0,t-2)].weights[j])<=1e-9);
+      const rebalanceOnly=!enterVixPosition&&target.weights.every((w,j)=>Math.abs(w-previousTarget.weights[j])<=1e-9);
       if(rebalanced){
         const beforeExposure=sum(before.map((w,j)=>w*data.symbols[j].leverage));
         data.symbols.forEach((s,j)=>{
@@ -463,5 +473,5 @@
     return{config:cfg,range:{start:data.dates[start],end:data.dates[end]},history,benchmark,metrics,benchmarkMetrics,details:{points,trades},audit:{inputHash:data.meta.inputHash,...(data.meta.dgs30CSVHash?{dgs30CSVHash:data.meta.dgs30CSVHash}:{}),days:history.length,bearGateDays,bearGateAppliedDays,drawdownGateDays,drawdownGateAppliedDays,cccStressBlueLimitDays,limitedDays,syntheticDays,rebalanceDays,costPaid,financingDays,financingInterestPaid,financingAnnualRate:FINANCING_RATE},sourceMeta:copy(data.meta)};
   }
   function readings(data){return Object.fromEntries(data.dates.map((d,i)=>{const v=data.readings[i],mask=data.signals[i];return[d,{temperature:v[0],tdc:v[1],creditSpread:v[2],creditMA200:v[3],creditPercentile:v[4],creditSourceDate:v[5],creditStress:!!(mask&(1<<7)),creditAbove:!!(mask&(1<<8))}];}));}
-  root.CustomBacktest=Object.freeze({RULES,ACTIONS,MOMENTUM_METHODS,DEFAULT_MOMENTUM_METHOD,BEAR_GATE_METHODS,DEFAULT_BEAR_GATE_METHOD,bearGateEnsemble,defaults,validate,ruleValueMax,usesMomentum,usesDgs30,usesTriangle,hasTriangleCoverage,resolveTarget,bearGate200,momentumChoice,stats,run,readings});
+  root.CustomBacktest=Object.freeze({RULES,ACTIONS,actionLabel,MOMENTUM_METHODS,DEFAULT_MOMENTUM_METHOD,BEAR_GATE_METHODS,DEFAULT_BEAR_GATE_METHOD,bearGateEnsemble,defaults,validate,ruleValueMax,usesMomentum,usesDgs30,usesTriangle,hasTriangleCoverage,resolveTarget,bearGate200,momentumChoice,stats,run,readings});
 })(typeof window!=='undefined'?window:globalThis);

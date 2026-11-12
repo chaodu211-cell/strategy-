@@ -84,7 +84,7 @@ let latest;
 for(let t=0;t<panel.dates.length;t++){
   const target=C.resolveTarget(panel,resolved,t,memory),signalDate=panel.dates[t];
   if(!replayDates.has(signalDate)&&t!==panel.dates.length-1)continue;
-  latest={configVersion:version,signalDate,weights:Object.fromEntries(panel.symbols.map((s,j)=>[s.symbol,target.weights[j]]).filter(([,w])=>w!==0)),selection:target.selection,state:target.state,reasons:target.reasons};
+  latest={configVersion:version,signalDate,weights:Object.fromEntries(panel.symbols.map((s,j)=>[s.symbol,target.weights[j]]).filter(([,w])=>w!==0)),selection:target.selection,state:target.state,reasons:target.reasons,...(target.vixReversalSignalDate?{vixReversalSignalDate:target.vixReversalSignalDate}:{})};
   targets.set(signalDate,latest);
 }
 if(args['replay-previous']==='true'){

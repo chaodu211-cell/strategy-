@@ -76,7 +76,7 @@
   function customReasons(detail, config) {
     const n=value=>Number.isFinite(value)?String(Number(value.toFixed(2))):'—';
     const x=value=>`${n(value)}倍`,p=value=>`${n(value*100)}%`;
-    const labels={red:'实心红点',red_ad:'空心红点',blue:'实心蓝点',blue_soft:'空心蓝点',yellow:'黄点预警',ccc_top:'CCC 见顶预警',ccc_bot:'CCC 见底预警',ccc_stress:'信用压力（分位≥95）',ccc_above:'利差高于200日线'};
+    const labels={red:'实心红点',red_ad:'空心红点',blue:'实心蓝点',blue_soft:'空心蓝点',yellow:'黄点预警',ccc_top:'CCC 见顶预警',ccc_bot:'CCC 见底预警',ccc_stress:'信用压力（分位≥95）',ccc_above:'利差高于200日线',triangle:'vix反转'};
     const base=String(detail.state||'常态').split(' · ')[0],rules=config.rules||[];
     const rule=rules.find(r=>labels[r.id]===base),ladder=detail.blueLadder,credit=detail.creditStack;
     const reasons=[],source=detail.reasons||[];
@@ -85,7 +85,10 @@
     else if(ladder?.selected)reasons.push(`蓝点分批：${ladder.asset}，已建 ${Math.min(ladder.count,ladder.steps)}/${ladder.steps} 份，原目标 ${x(ladder.target)}。`);
     else if(credit?.selected)reasons.push(`CCC见顶 × ${credit.creditLabel}：常态敞口 × ${n(credit.combinedMultiplier)}。`);
     else if(rule){
-      const action={flat:'清仓至BIL',long:`原多头目标 ${x(rule.value)}`,short:`做空目标 ${x(rule.value)}`,scale:`常态敞口 × ${n(rule.value)}`,blue_ladder:'分批建仓'}[rule.action]||'按当前配置';
+      const scale=rule.id==='triangle'
+        ?`抄底仓位 ${x(config.baseExposure)} × ${n(rule.value)} = ${x(config.baseExposure*rule.value)}，熊市闸门跳过该仓位`
+        :`常态敞口 × ${n(rule.value)}`;
+      const action={flat:'清仓至BIL',long:`原多头目标 ${x(rule.value)}`,short:`做空目标 ${x(rule.value)}`,scale,blue_ladder:'分批建仓'}[rule.action]||'按当前配置';
       const original=source.find(r=>r.startsWith(base+'：'))||'',window=original.match(/信号日 (\d{4}-\d{2}-\d{2})，有效 (\d+) 个交易日/);
       reasons.push(`${base}：${action}${window?`（${window[1]}起，${window[2]}日窗口）`:''}。`);
     }else reasons.push(base==='常态'?`常态配置：${detail.selection}，目标 ${x(detail.targetExposure)}。`:`生效规则：${base}。`);
