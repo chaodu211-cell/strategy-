@@ -9,11 +9,11 @@
 </head>
 <body>
 <aside class="sidebar">
-<a href="#signals" class="brand"><span class="brand-mark"><i></i><i></i></span><span>双模<span class="brand-sub">STRATEGY LAB</span></span></a>
+<a href="#overview" class="brand"><span class="brand-mark"><i></i><i></i></span><span>双模<span class="brand-sub">STRATEGY LAB</span></span></a>
 <div class="nav-label">研究工作台</div>
 <nav aria-label="主导航">
-<a class="nav-link active" href="#signals"><span class="nav-icon">⌁</span>模型信号</a>
-<a class="nav-link" href="#overview"><span class="nav-icon">◫</span>策略总览</a>
+<a class="nav-link active" href="#overview"><span class="nav-icon">◫</span>策略总览</a>
+<a class="nav-link" href="#signals"><span class="nav-icon">⌁</span>模型信号</a>
 <a class="nav-link" href="#holdings"><span class="nav-icon">◴</span>目标持仓</a>
 <a class="nav-link" href="#forward"><span class="nav-icon">◷</span>样本外检验</a>
 <a class="nav-link" href="#custom"><span class="nav-icon">⚙</span>自定义回测</a>
@@ -25,15 +25,15 @@
 <header class="topbar"><div class="breadcrumb">研究工作台 <span>/</span> <strong>双模型策略</strong></div><div class="top-actions"><span class="snapshot-badge" id="connection-badge"><i></i> 正在连接仓库</span><button class="button subtle refresh-button" id="refresh-live" aria-label="立即检查仓库更新">↻ 检查更新</button><button class="button subtle" id="download-snapshot"><span>↓</span> 导出持仓</button></div></header>
 <main>
 <div class="loading-error" id="loading-error" role="alert" hidden>数据载入失败。请刷新页面，或检查 data.json 文件。</div>
+<section id="overview" class="overview anchor-section">
+<div class="intro"><div><p class="eyebrow">DUAL-MODEL STRATEGY</p><h1>基于双模型的量化策略</h1><p class="lead">最优拟合负责择时，CCC 利差调节风险。<br class="mobile-break">从两个模型，读懂每一份仓位的来由。</p></div><div class="asof"><span>组合计算截至</span><strong data-signal-date>—</strong><small>按信号次日收盘执行</small></div></div>
+</section>
 <section id="signals" class="anchor-section">
 <div class="section-heading"><div><p class="eyebrow">01 / MODEL READINGS</p><h2>两个模型，各司其职</h2><p>模型输出信号与约束，组合策略将它们转换成具体持仓。</p></div><span class="section-note">信号与仓位之间，都有规则。</span></div>
 <div class="signal-grid">
 <article class="panel signal-panel"><div class="signal-title"><span class="model-index">A</span><div><h3>最优拟合模型</h3><p>识别参与、离场与解除锁定的时机</p></div><span class="tag green">常态</span></div><div class="reading-pair"><div><span>红点温度</span><strong id="fit-temperature">—</strong></div><div><span>TDC</span><strong id="fit-tdc">—</strong></div></div><div class="signal-state"><i class="green-dot"></i><div><strong id="fit-state-title">当前未处于红点窗口或黄点锁仓</strong><p id="fit-state-detail">红点已超过30个交易日；TDC低于60，黄点锁定已解除。</p></div></div><div class="event-list" id="fit-events"></div><p class="panel-footnote">简明版用红黄点控制离场，不以蓝点主动抄底。</p></article>
 <article class="panel signal-panel"><div class="signal-title"><span class="model-index credit-index">B</span><div><h3>CCC 利差模型</h3><p>观察信用压力，调节可承担的敞口</p></div><span class="tag amber">压力阶段</span></div><div class="reading-pair"><div><span>CCC 利差</span><strong id="credit-spread">—</strong></div><div><span>200日均线</span><strong id="credit-ma">—</strong></div></div><div class="percentile-heading"><span>252日历史分位</span><strong id="credit-percentile">—</strong></div><div class="percentile-track"><div id="credit-percentile-fill"></div><i></i></div><div class="percentile-ticks"><span>0 · 自满</span><span>95 · 压力阈值</span><span>100</span></div><div class="signal-state amber-state"><i class="amber-dot"></i><div><strong id="credit-state-title">高于均线，且进入信用压力区间</strong><p id="credit-state-detail">简明版减半；拟合版按各档压力乘数调整。</p></div></div><p class="panel-footnote" id="credit-footnote">历史分位不是风险概率；高于均线不表示当天环比上升。</p></article>
 </div>
-</section>
-<section id="overview" class="overview anchor-section">
-<div class="intro"><div><p class="eyebrow">DUAL-MODEL STRATEGY</p><h1>读懂信号，配置当下<span>。</span></h1><p class="lead">最优拟合负责择时，CCC 利差调节风险。<br class="mobile-break">从两个模型，读懂每一份仓位的来由。</p></div><div class="asof"><span>组合计算截至</span><strong data-signal-date>—</strong><small>按信号次日收盘执行</small></div></div>
 </section>
 <section id="holdings" class="anchor-section holdings-section">
 <div class="section-heading"><div><p class="eyebrow">02 / CURRENT ALLOCATION</p><h2>当前合理持仓</h2><p>点击策略可查看具体规则、当前仓位与依据。</p></div><div class="segmented" role="group" aria-label="策略版本"><button data-family="simple" class="active" aria-pressed="true">简明版</button><button data-family="fitted" aria-pressed="false">拟合版</button><button data-family="custom" aria-pressed="false">自定义</button></div></div>
