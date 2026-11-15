@@ -7,10 +7,13 @@ assert.deepEqual(registry.strategies,seed.config,'说明参数必须与六套原
 const context={window:{}};vm.runInNewContext(source,context);const {buildContent,ruleRows}=context.window.StrategyDetails;
 for(const s of data.strategies){
   const p=registry.strategies[s.id],html=buildContent(s,p);
-  for(const text of ['当前目标仓位','当前依据','具体策略规则','规则如何组合',s.signalDate,s.formula,`常态基准 ${p.lev_max} 倍`,`TDC &lt; ${p.rearm}`])assert.ok(html.includes(text),`${s.id}: ${text}`);
+  for(const text of ['当前目标仓位','当前依据','具体策略规则','规则如何组合','敞口计算',s.signalDate,`常态基准 ${p.lev_max} 倍`,`TDC &lt; ${p.rearm}`])assert.ok(html.includes(text),`${s.id}: ${text}`);
   assert.equal(ruleRows(s,p).length,12);
   for(const h of s.holdings)assert.ok(html.includes(h.symbol));
   for(const r of s.reasons.filter(r=>r.active))assert.ok(html.includes(r.title));
+  for(const r of s.reasons.slice(1).filter(r=>r.matched&&Number.isFinite(r.multiplier))){
+    assert.ok(html.includes(`<dt>${r.title}</dt><dd><strong>× ${r.multiplier}</strong>`));
+  }
   assert.ok(html.includes(p.use_ad?'实心或空心红点':'仅实心红点'));
   if(p.blue_hold)assert.ok(html.includes(`${p.blue_lev} × min(1, N / ${p.blue_k})`));else assert.ok(html.includes('不启用蓝点分批抄底'));
   if(p.dd_brake)assert.ok(html.includes(`${p.dd_brake[0]*100}%`)&&html.includes(`${p.dd_brake[0]*50}%`));else assert.ok(html.includes('不启用组合回撤闸'));
