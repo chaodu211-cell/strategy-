@@ -11,9 +11,17 @@ let HISTORY_DETAILS = null;
 let historyLoadState = 'idle';
 let DAILY_HISTORY=null,dailyHistoryState='idle',chartRange=null,chartRangeDates=[],rangeFrame=null;
 let customResult = null, customReadings = null, historySource = 'original';
+let customExtension=null,latestVix=null,registeredStrategy=null;
 let customChartWindow = 'inSample';
 const annotationFilters = new Set(ModelAnnotations.TYPES.map(t=>t.id));
-const strategyDetails = StrategyDetails.attach();
+const strategyDetails = StrategyDetails.attach(s=>{
+  if(s.configSnapshot){
+    $('#custom-form').dispatchEvent(new CustomEvent('registered-backtest',{detail:s.configSnapshot}));
+  }else{
+    historySource='original';renderHistory();
+    $('#history').scrollIntoView({behavior:'smooth',block:'start'});
+  }
+});
 let selection = { family: 'simple', risk: 'balanced', window: 'inSample' };
 const riskNames = {conservative:'稳健',balanced:'均衡',aggressive:'进取'};
 const riskDescriptions = {conservative:'控制敞口，优先防守',balanced:'参与增长，兼顾风险',aggressive:'放大参与，承受波动'};
@@ -24,6 +32,23 @@ const escapeHTML = (str) => String(str).replace(/[&<>"']/g, char => ({'&':'&amp;
 const displayName = (s) => s.family === 'fitted' ? `拟合·${riskNames[s.risk]}` : s.name;
 const selected = () => DATA.strategies.find(s => s.family === selection.family && s.risk === selection.risk);
 const holdingText = (s) => s.holdings.length ? s.holdings.map(h => `${h.symbol} ${weight(h.weight)}`).join(' / ') : '无权益持仓';
+document.addEventListener('registered-strategy',event=>{
+  registeredStrategy=event.detail;
+  if(DATA)renderHoldings(selected());
+});
+
+function registeredAllocation(){
+  const pending=registeredStrategy?.pending;
+  if(!pending)return null;
+  const {id,name,configSnapshot}=registeredStrategy;
+  const {BIL:cash=0,...equity}=pending.weights;
+  const leverage={QQQ:1,SOXX:1,QLD:2,USD:2,TQQQ:3,SOXL:3,PSQ:-1,SQQQ:-3};
+  const holdings=Object.entries(equity).map(([symbol,weight])=>({symbol,weight}));
+  const exposure=holdings.reduce((sum,h)=>sum+h.weight*leverage[h.symbol.replace(/^SYN_/,'')],0);
+  return {id,name,configSnapshot,holdings,cash,exposure,signalDate:pending.signalDate,state:pending.state,
+    summary:pending.state,formula:`${holdingText({holdings})} · 底层敞口 ${fmt(exposure,2)}×`,
+    reasons:(pending.reasons??[]).map(detail=>({title:'',detail,active:true}))};
+}
 
 function init() {
   const {meta,models} = DATA;
@@ -63,9 +88,8 @@ function init() {
   $('#download-snapshot').addEventListener('click', downloadSnapshot);
   $('#annotation-controls').addEventListener('change',event=>{const id=event.target.dataset.annotationFilter;if(!id)return;if(event.target.checked)annotationFilters.add(id);else annotationFilters.delete(id);renderHistory();});
   attachHistoryRangeControls();
-  CustomControls.attach((result,readings,registered)=>{chartRange=null;if(registered)customChartWindow='full';customResult=result;customReadings=readings;historySource='custom';$$('[data-history-source="custom"]').forEach(b=>b.disabled=false);renderHistory();});
+  CustomControls.attach((result,readings,registered)=>{chartRange=null;if(registered)customChartWindow='full';customResult=result;customReadings=readings;historySource='custom';$$('[data-history-source="custom"]').forEach(b=>b.disabled=false);renderHistory();},()=>({extension:customExtension,vix:latestVix}));
   $$('[data-history-source]').forEach(button=>button.addEventListener('click',()=>{historySource=button.dataset.historySource;renderHistory();}));
-  $('[data-strategy-history]').addEventListener('click',()=>{historySource='original';renderHistory();});
   $('#open-strategy-details').addEventListener('click',()=>strategyDetails.open(selected(),'#open-strategy-details'));
   render();
   const observer = new IntersectionObserver(entries=>{
@@ -91,13 +115,24 @@ function render() {
   $('#allocation-legend').innerHTML = current.holdings.map(h=>`<div class="allocation-item"><div class="allocation-item-top"><span><i></i>${h.symbol}</span><strong>${weight(h.weight)}</strong></div><p>${Math.abs(h.leverage)}倍${h.underlying==='SOXX'?'半导体':'纳指'}${h.leverage<0?'反向':''}工具 · 资金权重</p></div>`).join('')+`<div class="allocation-item cash"><div class="allocation-item-top"><span><i></i>BIL</span><strong>${weight(current.cash)}</strong></div><p>现金类工具 · 资金权重</p></div>`;
   $('#exposure-formula').textContent = current.holdings.length ? `${holdingText(current)} × ${current.holdings[0].leverage} ≈ ${fmt(current.exposure,2)}倍` : '权益工具 0% → 底层敞口 0倍';
   renderReasons(current);
-  $('#holdings-table').innerHTML = DATA.strategies.map(s=>`<tr tabindex="0" role="button" data-strategy="${s.id}" class="${s.id===current.id?'selected':''}" aria-haspopup="dialog" aria-controls="strategy-dialog" aria-label="查看${displayName(s)}的具体策略、仓位与依据"><td>${displayName(s)}${s.id===current.id?'<span class="row-arrow">↗</span>':''}</td><td>${holdingText(s)}</td><td>${weight(s.cash)}</td><td><strong>${fmt(s.exposure,2)}×</strong></td><td>${escapeHTML(s.signalDate || DATA.meta.signalDate)}</td><td>${escapeHTML(s.reasons.filter(r=>r.active&&r!==s.reasons[0]).map(r=>r.title).join('、') || s.state)}</td></tr>`).join('');
+  renderHoldings(current);
+  renderHistory();
+}
+
+function renderHoldings(current){
+  const registered=registeredAllocation();
+  const strategies=registered?[...DATA.strategies,registered]:DATA.strategies;
+  $('#holdings-table').innerHTML = strategies.map(s=>`<tr tabindex="0" role="button" data-strategy="${s.id}" class="${s.id===current.id?'selected':''}" aria-haspopup="dialog" aria-controls="strategy-dialog" aria-label="查看${escapeHTML(displayName(s))}的具体策略、仓位与依据"><td>${escapeHTML(displayName(s))}${s.id===current.id?'<span class="row-arrow">↗</span>':''}</td><td>${holdingText(s)}</td><td>${s.cash<0?'融资 '+weight(-s.cash):weight(s.cash)}</td><td><strong>${fmt(s.exposure,2)}×</strong></td><td>${escapeHTML(s.signalDate || DATA.meta.signalDate)}</td><td>${escapeHTML(s.reasons.filter(r=>r.active&&r!==s.reasons[0]&&r.title).map(r=>r.title).join('、') || s.state)}</td></tr>`).join('');
+  if(registeredStrategy&&!registered)$('#holdings-table').insertAdjacentHTML('beforeend',`<tr><td>${escapeHTML(registeredStrategy.name)}</td><td colspan="5">等待已核验的目标仓位</td></tr>`);
   $$('[data-strategy]').forEach(row=>{
-    const activate=()=>{const s=DATA.strategies.find(s=>s.id===row.dataset.strategy);selection.family=s.family;selection.risk=s.risk;historySource='original';render();strategyDetails.open(s,`[data-strategy="${s.id}"]`);};
+    const activate=()=>{
+      const s=strategies.find(s=>s.id===row.dataset.strategy);
+      if(!s.configSnapshot){selection.family=s.family;selection.risk=s.risk;historySource='original';render();}
+      strategyDetails.open(s,`[data-strategy="${s.id}"]`);
+    };
     row.addEventListener('click',activate);
     row.addEventListener('keydown',event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();activate();}});
   });
-  renderHistory();
 }
 
 function renderReasons(s) {
@@ -156,9 +191,23 @@ function attachHistoryRangeControls(){
   });
   $('#history-range-reset').addEventListener('click',()=>{if(!chartRange)return;chartRange.first=0;chartRange.last=chartRangeDates.length-1;renderHistory();});
 }
+function chartPresets(dates){
+  return {...DATA.windows,outOfSample:{start:DATA.windows.inSample.end,end:dates.at(-1)},
+    full:{start:dates[0],end:dates.at(-1)}};
+}
+function syncChartPresets(dates,presets,range,selector,attribute){
+  $$(selector).forEach(button=>{
+    const preset=presets[button.dataset[attribute]];
+    const first=dates.findIndex(d=>d>=preset.start),last=dates.findLastIndex(d=>d<=preset.end);
+    button.disabled=first<0||last<=first;
+    button.title=button.disabled?'此区间至少需要两个已核验交易日':`${dates[first]} — ${dates[last]}`;
+    const active=!button.disabled&&dates[first]===range.start&&dates[last]===range.end;
+    button.classList.toggle('active',active);button.setAttribute('aria-pressed',active);
+  });
+}
 function currentChartRange(dates,key,initial){
   const followEnd=chartRange?.key===key&&chartRange.last===chartRangeDates.length-1
-    &&dates.length>chartRangeDates.length&&dates[chartRange.last]===chartRangeDates.at(-1);
+    &&dates.length>chartRangeDates.length&&dates[chartRange.last]===chartRangeDates.at(-1)&&initial.end===dates.at(-1);
   chartRangeDates=dates;
   if(followEnd)chartRange.last=dates.length-1;
   if(!chartRange||chartRange.key!==key)chartRange={key,...HistoryChart.rangeIndices(dates,initial.start,initial.end)};
@@ -201,8 +250,8 @@ function renderOriginalRange(current,detail){
   const d=HistoryChart.extendDailyHistory(DAILY_HISTORY,detail,researchExtension,current.id);
   detail=d.detail;
   const end=d.dates.at(-1);
-  const windowFor=key=>key==='inSample'?{...DATA.windows[key],end}:DATA.windows[key];
-  const range=currentChartRange(d.dates,'original',windowFor(selection.window));
+  const presets=chartPresets(d.dates);
+  const range=currentChartRange(d.dates,'original',presets[selection.window]);
   const baseEnd=DAILY_HISTORY.dates.at(-1);
   $('#history-live-status').textContent=end>baseEnd
     ?`行情截至 ${end} · 组合信号截至 ${d.signalThrough} · ${baseEnd} 后按已发布信号续算`
@@ -210,7 +259,7 @@ function renderOriginalRange(current,detail){
   const a=chartRange.first,b=chartRange.last;
   const strategy=d.dates.slice(a,b+1).map((date,i)=>({date,nav:d.nav[a+i]})),benchmark=d.dates.slice(a,b+1).map((date,i)=>({date,nav:d.benchmark[a+i]}));
   const m=HistoryChart.summarize(strategy,detail.trades),bm=HistoryChart.summarize(benchmark);
-  $$('[data-window]').forEach(btn=>{const r=windowFor(btn.dataset.window),active=r.start===range.start&&r.end===range.end;btn.classList.toggle('active',active);btn.setAttribute('aria-pressed',active);});
+  syncChartPresets(d.dates,presets,range,'[data-window]','window');
   $('#history-title').innerHTML=`${displayName(current)} <span>vs 持有 QQQ</span>`;
   renderRangeMetrics(m,bm,`${m.rebalanceDays} 次调仓 · 所选区间`);
   const annotations=HISTORY_DETAILS.modelAnnotations,collection=ModelAnnotations.collect(annotations,detail,range,annotationFilters);renderAnnotationControls(collection);
@@ -221,16 +270,16 @@ function renderHistory() {
   const isCustom=historySource==='custom'&&customResult;
   $$('[data-history-source]').forEach(b=>{b.classList.toggle('active',b.dataset.historySource===historySource);b.setAttribute('aria-pressed',b.dataset.historySource===historySource);});
   $('#history-window-controls').hidden=!!isCustom;
-  $('#history-live-status').hidden=!!isCustom;
   $('#history-custom-window-controls').hidden=!isCustom;
   $('#history-caveat-copy').textContent=isCustom?'自定义规则由你设定。反复根据历史结果调整参数可能过拟合；源模型设计也参考过历史，2007–16不能视作完全独立样本外。历史回测不保证未来表现。':'十年数据参与了参数选择，属于样本内；2007–16年的信号设计也参考了历史，只能视作半样本外。回撤预算是筛选条件，不能保证未来回撤上限。';
   if(isCustom){renderCustomHistory();return;}
   loadHistoryDetails();loadDailyHistory();
-  const current=selected(), key=selection.window;
+  const current=selected(), key=DATA.windows[selection.window]?selection.window:'inSample';
   if(DAILY_HISTORY&&HISTORY_DETAILS?.strategies[current.id]){renderOriginalRange(current,HISTORY_DETAILS.strategies[current.id]);return;}
   for(const id of ['history-range-start','history-range-end','history-range-from','history-range-to'])$('#'+id).disabled=true;
   $('#history-range-status').textContent=dailyHistoryState==='error'?'逐日净值加载失败，请刷新重试。':'正在加载完整逐日净值与持仓记录…';
-  $$('[data-window]').forEach(button=>{const active=button.dataset.window===key;button.classList.toggle('active',active);button.setAttribute('aria-pressed',active);});
+  $('#history-live-status').textContent='';
+  $$('[data-window]').forEach(button=>{button.disabled=!DATA.windows[button.dataset.window];const active=button.dataset.window===key;button.classList.toggle('active',active);button.setAttribute('aria-pressed',active);});
   $('#history-title').innerHTML = `${displayName(current)} <span>vs 持有 QQQ</span>`;
   const m=current.metrics[key],b=DATA.benchmark.metrics[key];
   renderHistoryMetrics([
@@ -259,14 +308,14 @@ function renderHistory() {
 
 function renderCustomHistory() {
   const result = customResult, detail = result.details;
-  const windows = {...DATA.windows, full: result.range};
-  const range = currentChartRange(result.history.map(point => point.date), 'custom', windows[customChartWindow]);
-  $$('[data-custom-chart-window]').forEach(button => {
-    const preset = windows[button.dataset.customChartWindow];
-    const active = range.start === preset.start && range.end === preset.end;
-    button.classList.toggle('active', active);
-    button.setAttribute('aria-pressed', active);
-  });
+  const dates=result.history.map(point=>point.date),windows=chartPresets(dates);
+  if(customChartWindow==='outOfSample'&&dates.at(-1)<=windows.inSample.end)customChartWindow='inSample';
+  const range=currentChartRange(dates,'custom',windows[customChartWindow]);
+  syncChartPresets(dates,windows,range,'[data-custom-chart-window]','customChartWindow');
+  const {end,signalThrough}=result.sourceMeta;
+  $('#history-live-status').textContent=signalThrough
+    ?`行情截至 ${end} · 组合信号截至 ${signalThrough} · 其后沿用最新完整目标`
+    :`行情截至 ${end} · 等待日更续算`;
   const strategy=result.history.slice(chartRange.first,chartRange.last+1),benchmark=result.benchmark.slice(chartRange.first,chartRange.last+1);
   const m=HistoryChart.summarize(strategy,detail.trades),b=HistoryChart.summarize(benchmark);
   $('#history-title').innerHTML=`${escapeHTML(result.config.name)} <span>自定义 vs 持有 QQQ</span>`;
@@ -421,7 +470,7 @@ function drawChart(series,benchmark,details,drawdowns,collection,annotations,cus
 function downloadSnapshot() {
   if(!DATA)return;
   const rows=[['信号日','策略','ETF','目标资金权重','底层敞口倍数','原因']];
-  DATA.strategies.forEach(s=>{[...s.holdings,{symbol:'BIL',weight:s.cash}].forEach(h=>rows.push([s.signalDate,displayName(s),h.symbol,pct(h.weight,4),s.exposure,s.summary]));});
+  [...DATA.strategies,registeredAllocation()].filter(Boolean).forEach(s=>{[...s.holdings,{symbol:'BIL',weight:s.cash}].forEach(h=>rows.push([s.signalDate,displayName(s),h.symbol,pct(h.weight,4),s.exposure,s.summary]));});
   const csv='\uFEFF'+rows.map(row=>row.map(cell=>'"'+String(cell).replaceAll('"','""')+'"').join(',')).join('\r\n');
   const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));
   const a=document.createElement('a');a.href=url;a.download=`双模型策略_目标持仓_${DATA.meta.signalDate}.csv`;a.click();setTimeout(()=>URL.revokeObjectURL(url),2000);
@@ -471,6 +520,8 @@ async function refreshLive() {
     if(researchVersion&&payload.data.meta?.researchVersion!==researchVersion)throw new Error('日更数据版本尚未同步');
     DATA=payload.data;MONITOR=payload.monitor;lastSuccessMonitor=MONITOR;
     if(payload.researchHistory?.version===researchVersion)researchExtension=payload.researchHistory;
+    customExtension=payload.customHistory??customExtension;
+    latestVix=payload.vixTermRelease??latestVix;
     $('#loading-error').hidden=true;
     try{localStorage.setItem('dual-model-last-verified',JSON.stringify({schema:1,data:DATA,monitor:MONITOR,researchHistory:researchExtension}));}catch{}
     init();

@@ -9,7 +9,7 @@
   ],
   "custom": {
     "schemaVersion": 1,
-    "name": "Chao#1",
+    "name": "Exeter",
     "asset": "momentum",
     "momentum": {
       "lookback": 126,
@@ -30,7 +30,8 @@
       },
       "method": "combined"
     },
-    "bearGateEnabled": false,
+    "bearGateEnabled": true,
+    "bearGateMethod": "ensemble",
     "drawdownGateEnabled": false,
     "cccStressBlueLimitEnabled": true,
     "baseExposure": 3,
@@ -55,7 +56,7 @@
       {
         "id": "blue",
         "action": "blue_ladder",
-        "value": 4,
+        "value": 2.5,
         "days": 40,
         "priority": 95,
         "steps": 10,
@@ -110,6 +111,13 @@
         "value": 0.5,
         "days": 1,
         "priority": 80
+      },
+      {
+        "id": "triangle",
+        "action": "scale",
+        "value": 4,
+        "days": 40,
+        "priority": 99
       }
     ],
     "start": "2007-01-03",
@@ -119,17 +127,17 @@
   "notes": [
     "净值首个完整收盘以1为基准，初始继承已观测目标；首次基准不计入场费，此后包含BIL收益、分档成交成本及融资5% ACT/365。",
     "同一策略版本参数固定；历史净值只追加，不随上游模型回写而重算。",
-    "自定义策略按本文件登记。历史回放按当前参数重算，后续每日跟踪接续该净值，旧版本归档。"
+    "自定义策略按本文件登记；浏览器草稿不会自动上传。旧版本归档，新版本从登记后可执行的完整收盘开始，以1为基准记录。"
   ],
-  "customId": "custom-chao-1-combined",
+  "customId": "custom-exeter",
   "customRegistration": {
-    "strategyId": "custom-chao-1-combined",
-    "previousStrategyId": "custom-chao-1",
-    "name": "Chao#1",
-    "startDate": "2026-11-09",
-    "registeredAt": "2026-11-09T14:27:55Z",
-    "configVersion": "185bb4fe5104599275309a9313dbfda3272edb901cc992c57d03cc280e3cea13",
-    "sourceSettingsFile": "自定义策略_设置 (2).json",
-    "sourceSettingsSHA256": "655469f6ae95886bdbe316446d3e825514c7cb868fd8060b318a4aff8ab5e9d8"
+    "strategyId": "custom-exeter",
+    "previousStrategyId": "custom-chao-1-combined",
+    "name": "Exeter",
+    "startDate": "2026-11-16",
+    "registeredAt": "2026-11-15T10:33:46Z",
+    "configVersion": "0e2877d5d784f5e40690f8c29a3edc2efe0a9a01d78d34316a20482c7efbea4b",
+    "sourceSettingsFile": "自定义策略_设置.json",
+    "sourceSettingsSHA256": "062b52cc6a8e9c26d5c3606baca58250323d82f92159041ce753e6448b791540"
   }
 }

@@ -4,7 +4,7 @@
   const pct=value=>`${(value*100).toFixed(2).replace(/\.?0+$/,'')}%`;
   const num=value=>String(Number(Number(value).toFixed(6)));
   const names={conservative:'稳健',balanced:'均衡',aggressive:'进取'};
-  const name=s=>`${s.family==='simple'?'简明':'拟合'}·${names[s.risk]}`;
+  const name=s=>s.configSnapshot?s.name:`${s.family==='simple'?'简明':'拟合'}·${names[s.risk]}`;
   function ruleRows(s,p){
     const short=e=>e>0?`持有 ${num(e)} 倍纳指反向敞口，使用 ${p.short_inst}，资金权重为 ${pct(e/(p.short_inst==='PSQ'?1:3))}，余下配置 BIL。`:'权益敞口归零，配置 BIL。';
     const factor=m=>m===1?'不调整常态敞口（乘数 1）。':`常态敞口乘 ${num(m)}${m===0?'，普通多头敞口归零':''}。`;
@@ -27,19 +27,38 @@
   function rulesContent(s,p){
     return `<section class="strategy-detail-section"><h3>具体策略规则</h3><dl class="strategy-rule-list">${ruleRows(s,p).map(([title,detail])=>`<div class="strategy-rule-row"><dt>${esc(title)}</dt><dd>${esc(detail)}</dd></div>`).join('')}</dl></section><section class="strategy-detail-section"><h3>规则如何组合</h3><ol class="strategy-priority"><li>先计算常态／锁仓敞口：黄点锁仓时采用该档锁仓配置；未锁仓时，常态基准乘以所有命中的红点、CCC、熊市和回撤闸乘数。</li><li>常态乘数归零时：红点窗口内按该档红点反向配置，否则持有 BIL。常态规则之间累乘，不按自定义策略的优先级选单一规则。</li><li>单独计算蓝点抄底；抄底敞口为正且 ≥ 常态／锁仓敞口时优先执行，因此也可能覆盖 BIL 或反向仓位。</li><li>最后将底层敞口换算为 ETF 资金权重。上方“当前目标仓位”显示的是本策略最新信号日的计算结果。</li></ol></section>`;
   }
+  function currentContent(s){
+    const holdings=s.holdings.map(h=>`${h.symbol} ${pct(h.weight)}`),cash=s.cash<0?`融资负债 ${pct(-s.cash)}`:`BIL ${pct(s.cash)}`;
+    return `<section class="strategy-detail-section strategy-current"><div class="strategy-current-heading"><h3>当前目标仓位</h3><span>信号日 ${esc(s.signalDate)}</span></div><p class="strategy-current-holdings">${esc([...holdings,cash].join(' / '))}</p><p>底层敞口 <strong>${Number(s.exposure).toFixed(2)}倍</strong></p><p>${esc(s.summary)}</p><div class="strategy-current-formula">${esc(s.formula)}</div></section>`;
+  }
   function buildContent(s,p){
-    const active=(s.reasons||[]).filter(r=>r.active),holdings=s.holdings.map(h=>`${h.symbol} ${pct(h.weight)}`),cash=s.cash<0?`融资负债 ${pct(-s.cash)}`:`BIL ${pct(s.cash)}`;
-    return `<section class="strategy-detail-section strategy-current"><div class="strategy-current-heading"><h3>当前目标仓位</h3><span>信号日 ${esc(s.signalDate)}</span></div><p class="strategy-current-holdings">${esc([...holdings,cash].join(' / '))}</p><p>底层敞口 <strong>${Number(s.exposure).toFixed(2)}倍</strong></p><p>${esc(s.summary)}</p><div class="strategy-current-formula">${esc(s.formula)}</div></section><section class="strategy-detail-section"><h3>当前依据</h3>${active.length?`<ul class="strategy-active-rules">${active.map(r=>`<li><strong>${esc(r.title)}</strong>：${esc(r.detail)}</li>`).join('')}</ul>`:'<p>当前未命中额外约束，按常态配置。</p>'}${s.liveStatus==='blocked'?`<p class="strategy-data-note">${esc(s.liveMessage||'数据尚未齐全，保留最后完整目标。')}</p>`:''}</section>${p?rulesContent(s,p):''}`;
+    const active=(s.reasons||[]).filter(r=>r.active);
+    return currentContent(s)+`<section class="strategy-detail-section"><h3>当前依据</h3>${active.length?`<ul class="strategy-active-rules">${active.map(r=>`<li><strong>${esc(r.title)}</strong>：${esc(r.detail)}</li>`).join('')}</ul>`:'<p>当前未命中额外约束，按常态配置。</p>'}${s.liveStatus==='blocked'?`<p class="strategy-data-note">${esc(s.liveMessage||'数据尚未齐全，保留最后完整目标。')}</p>`:''}</section>${p?rulesContent(s,p):''}`;
+  }
+  function registeredContent(s){
+    const config=s.configSnapshot,C=root.CustomBacktest;
+    const method=C.MOMENTUM_METHODS[config.momentum?.method??C.DEFAULT_MOMENTUM_METHOD]?.label;
+    const asset=config.asset==='momentum'?'QQQ / SOXX '+method:config.asset;
+    const gate=config.bearGateEnabled?C.BEAR_GATE_METHODS[config.bearGateMethod??C.DEFAULT_BEAR_GATE_METHOD].label:'关闭';
+    const rules=C.RULES.flatMap(({id,label})=>{
+      const rule=config.rules.find(r=>r.id===id);
+      if(!rule||rule.action==='ignore')return [];
+      const value=['flat','ignore'].includes(rule.action)?'':` ${rule.value}`;
+      return [`<li><strong>${esc(label)}</strong> · ${esc(C.actionLabel(id,rule.action)+value)}${rule.days?` · ${rule.days} 个交易日`:''} · 优先级 ${rule.priority}</li>`];
+    }).join('');
+    return currentContent(s)+
+      `<section class="strategy-detail-section"><h3>当前依据</h3><ul class="strategy-active-rules">${s.reasons.map(r=>`<li>${esc(r.detail)}</li>`).join('')}</ul></section><section class="strategy-detail-section"><h3>登记规则</h3><p>常态 ${esc(asset)} · ${config.baseExposure} 倍 · 再平衡带 ${pct(config.band)} · 熊市闸门 ${esc(gate)}</p><ul class="strategy-active-rules">${rules}</ul></section>`;
   }
   let registryPromise;
   function loadRules(){
     if(!registryPromise)registryPromise=fetch('./strategy-rules.json?v=20261111').then(r=>{if(!r.ok)throw new Error('策略参数读取失败');return r.json();}).then(data=>{if(data.schemaVersion!==1||!data.strategies)throw new Error('策略参数格式无效');return data.strategies;}).catch(error=>{registryPromise=null;throw error;});
     return registryPromise;
   }
-  function attach(){
-    const dialog=document.querySelector('#strategy-dialog'),body=document.querySelector('#strategy-dialog-body');let returnSelector=null,request=0;
+  function attach(onHistory=()=>document.querySelector('#history').scrollIntoView({behavior:'smooth',block:'start'})){
+    const dialog=document.querySelector('#strategy-dialog'),body=document.querySelector('#strategy-dialog-body');let returnSelector=null,request=0,selected=null;
     async function show(s){
       const token=++request;
+      if(s.configSnapshot){body.innerHTML=registeredContent(s);body.scrollTop=0;return;}
       body.innerHTML=buildContent(s)+'<p class="strategy-loading" role="status">正在读取本策略的具体规则…</p>';body.scrollTop=0;
       try{const rules=await loadRules();if(!rules[s.id])throw new Error('缺少本策略参数');if(token===request&&dialog.open)body.innerHTML=buildContent(s,rules[s.id]);}
       catch(error){if(token!==request||!dialog.open)return;body.innerHTML=buildContent(s)+'<section class="strategy-detail-section"><p class="strategy-data-note" role="status">具体策略规则暂未读取成功。</p><button class="button" data-retry-strategy>重新读取策略规则</button></section>';body.querySelector('[data-retry-strategy]').addEventListener('click',()=>show(s));}
@@ -48,8 +67,8 @@
     dialog.querySelector('[data-close-strategy]').addEventListener('click',close);
     dialog.addEventListener('click',event=>{if(event.target!==dialog)return;const r=dialog.getBoundingClientRect();if(event.clientX<r.left||event.clientX>r.right||event.clientY<r.top||event.clientY>r.bottom)close();});
     dialog.addEventListener('close',()=>{request++;document.documentElement.classList.remove('strategy-dialog-open');if(returnSelector)document.querySelector(returnSelector)?.focus({preventScroll:true});});
-    dialog.querySelector('[data-strategy-history]').addEventListener('click',()=>{close();document.querySelector('#history').scrollIntoView({behavior:'smooth',block:'start'});});
-    return{open(s,selector){returnSelector=selector;document.querySelector('#strategy-dialog-title').textContent=name(s);document.querySelector('#strategy-dialog-description').textContent='具体策略规则 · 当前仓位与依据';if(!dialog.open)dialog.showModal();document.documentElement.classList.add('strategy-dialog-open');return show(s);},close};
+    dialog.querySelector('[data-strategy-history]').addEventListener('click',()=>{close();onHistory(selected);});
+    return{open(s,selector){returnSelector=selector;selected=s;document.querySelector('#strategy-dialog-title').textContent=name(s);document.querySelector('#strategy-dialog-description').textContent='具体策略规则 · 当前仓位与依据';if(!dialog.open)dialog.showModal();document.documentElement.classList.add('strategy-dialog-open');return show(s);},close};
   }
   root.StrategyDetails=Object.freeze({buildContent,ruleRows,attach});
 })(window);

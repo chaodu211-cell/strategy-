@@ -111,7 +111,7 @@
       }
       return{id:r.id,action:rule.action,value:rule.value,...(r.conditional?{unlock}:{days:rule.action==='blue_ladder'?40:rule.days}),priority:rule.priority,...(r.id==='ccc_top'?{stackWithCredit}:{}),...(r.id==='blue'?{steps,onlyIfNotLower,asset}:{})};
     });
-    if(data&&usesTriangle(c)&&!hasTriangleCoverage(data.vixTermRelease,c.end))throw new Error('vix反转信号未覆盖所选回测结束日。');
+    if(data&&usesTriangle(c)&&!hasTriangleCoverage(data.vixTermRelease,data.signalThrough&&data.signalThrough<c.end?data.signalThrough:c.end))throw new Error('vix反转信号未覆盖所选回测结束日。');
     const method=c.momentum?.method;
     if(method!==undefined&&(typeof method!=='string'||!Object.hasOwn(MOMENTUM_METHODS,method)))throw new Error('动量选品方法无效。');
     if(usesMomentum(c)||c.momentum===undefined||method!==undefined)c.momentum=momentumDefaults(method);
@@ -425,18 +425,44 @@
     if(max.value<0){const recovered=history.find(p=>p.date>=max.troughDate&&p.nav>=max.peakNav);max.recoveryDate=recovered?.date||null;}else max.recoveryDate=max.troughDate;
     return{cagr:(history.at(-1).nav/history[0].nav)**(1/years)-1,mdd:max.value,sharpe:vol>0?mean*252/vol:null,vol,mult:history.at(-1).nav/history[0].nav,turn_yr:sum(turnover.slice(1))/years,drawdown:max};
   }
+  function extendInputs(panel,extension,rates,vixTermRelease,config){
+    const source={...panel,vixTermRelease,...(rates?{dgs30:{...rates.yieldsBp},meta:{...panel.meta,dgs30CSVHash:rates.csvSHA256}}:{})};
+    if(extension?.inputHash!==panel.meta.inputHash||extension.baseEnd!==panel.meta.end||!extension.rows?.length)return source;
+    let signalThrough=extension.signalThrough;
+    if(usesTriangle(config)&&!hasTriangleCoverage(vixTermRelease,signalThrough)){
+      if(!hasTriangleCoverage(vixTermRelease,panel.meta.end))return source;
+      signalThrough=vixTermRelease.through;
+    }
+    const rows=extension.rows;
+    return {...source,signalThrough,
+      meta:{...source.meta,end:rows.at(-1).date,signalThrough},
+      dates:[...panel.dates,...rows.map(r=>r.date)],
+      returns:[...panel.returns,...rows.map(r=>r.returns)],
+      costs:[...panel.costs,...rows.map(r=>r.costs)],
+      tradable:[...panel.tradable,...rows.map(r=>r.tradable)],
+      signals:[...panel.signals,...rows.map(r=>r.signals??0)],
+      readings:[...panel.readings,...rows.map(r=>r.readings??null)],
+      yellowContext:{
+        tdc:[...panel.yellowContext.tdc,...rows.map(r=>r.tdc??null)],
+        qqqDrawdown52:[...panel.yellowContext.qqqDrawdown52,...rows.map(r=>r.dd52??null)]
+      },
+      ...(rates?{dgs30:{...source.dgs30,...Object.fromEntries(rows.map((r,i)=>[rows[i-1]?.date??panel.meta.end,r.dgs30LagBp??null]))}}:{})
+    };
+  }
   function run(data,input){
     if(data?.schemaVersion!==1||!Array.isArray(data.dates)||!data.symbols?.some(s=>s.symbol==='BIL')||RULES.some((r,i)=>r!==TRIANGLE&&data.signalTypes?.[i]!==r.id))throw new Error('自定义回测数据不完整，请刷新重试。');
     const cfg=validate(input,data),start=data.dates.findIndex(d=>d>=cfg.start),end=data.dates.findLastIndex(d=>d<=cfg.end);
     if(start<1||end<=start)throw new Error('所选日期内至少需要两个交易日。');
     if(cfg.rules[4].action!=='ignore'&&(cfg.rules[4].unlock.tdcEnabled||cfg.rules[4].unlock.priceEnabled)&&(!data.yellowContext||data.yellowContext.tdc?.length!==data.dates.length||data.yellowContext.qqqDrawdown52?.length!==data.dates.length))throw new Error('缺少黄点条件解锁的TDC或QQQ修复历史，请刷新页面重试。');
+    const signalEnd=data.signalThrough?data.dates.findLastIndex(d=>d<=data.signalThrough):end;
     const last=RULES.map(()=>-1e9),targets=[];
-    for(let t=0;t<=end;t++)targets.push(resolveTarget(data,cfg,t,last));
-    for(let t=start-1;t<end;t++){const c=targets[t].cccStressBlueLimit;if(c?.active&&c.originalExposure>0&&!c.ready)throw new Error(`${data.dates[t]} CCC压力位蓝点限制缺少 ${c.monitorAsset} 完整10个有效日收益，请补全数据后重试。`);}
+    for(let t=0;t<=Math.min(end,signalEnd);t++)targets.push(resolveTarget(data,cfg,t,last));
+    const targetIndex=t=>Math.min(t,signalEnd);
+    for(let t=start-1;t<end;t++){const c=targets[targetIndex(t)].cccStressBlueLimit;if(c?.active&&c.originalExposure>0&&!c.ready)throw new Error(`${data.dates[targetIndex(t)]} CCC压力位蓝点限制缺少 ${c.monitorAsset} 完整10个有效日收益，请补全数据后重试。`);}
     const bil=data.symbols.findIndex(s=>s.symbol==='BIL'),qi=data.symbols.findIndex(s=>s.symbol==='QQQ'),turnover=[],history=[],benchmark=[],points={},trades=[];
-    let h=targets[start-1].weights.slice(),benchmarkNav=1,limitedDays=0,syntheticDays=0,costPaid=0,rebalanceDays=0,financingDays=0,financingInterestPaid=0,bearGateDays=0,bearGateAppliedDays=0,cccStressBlueLimitDays=0,drawdownGateDays=0,drawdownGateAppliedDays=0;
+    let h=targets[targetIndex(start-1)].weights.slice(),benchmarkNav=1,limitedDays=0,syntheticDays=0,costPaid=0,rebalanceDays=0,financingDays=0,financingInterestPaid=0,bearGateDays=0,bearGateAppliedDays=0,cccStressBlueLimitDays=0,drawdownGateDays=0,drawdownGateAppliedDays=0;
     for(let t=start;t<=end;t++){
-      const target=targets[t-1],date=data.dates[t];let rebalanced=false,turn=0,financingInterest=0;
+      const target=targets[targetIndex(t-1)],date=data.dates[t];let rebalanced=false,turn=0,financingInterest=0;
       if(t>start){
         const days=(Date.parse(date)-Date.parse(data.dates[t-1]))/86400000;
         h=h.map((v,j)=>{if(j===bil&&v<0){const interest=-v*FINANCING_RATE*days/365;financingInterest=interest;return v-interest;}return v*(1+data.returns[t][j]);});
@@ -445,7 +471,7 @@
       let nav=sum(h);if(!(nav>0)||!Number.isFinite(nav))throw new Error(`${date} 净值已耗尽、为非正数或发生数值溢出，回测终止；不会将结果截为正净值。`);
       const before=h.map(v=>v/nav),delta=target.weights.map((v,j)=>Math.abs(v-before[j]));
       const reasons=target.reasons.slice();
-      const previousTarget=targets[Math.max(0,t-2)];
+      const previousTarget=targets[targetIndex(Math.max(0,t-2))];
       const enterVixPosition=target.vixReversalSignalDate&&
         target.vixReversalSignalDate!==previousTarget.vixReversalSignalDate&&delta.some(d=>d>1e-9);
       if(t>start&&(enterVixPosition||Math.max(...delta)>cfg.band+1e-12||target.weights.some((v,j)=>(v>1e-9)!==(before[j]>1e-9)))){
@@ -460,7 +486,7 @@
         data.symbols.forEach((s,j)=>{
           if(j===bil||Math.abs(weights[j]-before[j])<=1e-9)return;
           const kind=before[j]<=1e-9?'buy':weights[j]<=1e-9?'sell':weights[j]>before[j]?'add':'reduce';
-          trades.push({date,signalDate:data.dates[t-1],type:kind,symbol:s.symbol,weightBefore:before[j],weightAfter:weights[j],weightChange:weights[j]-before[j],exposureBefore:beforeExposure,exposureAfter:exposure,cashBefore:before[bil],cashAfter:weights[bil],state:target.state,inverse:s.leverage<0,leverage:s.leverage,rebalanceOnly,reason:rebalanceOnly?'rebalancing_band':'target_update',reasonDate:date,band:cfg.band});
+          trades.push({date,signalDate:data.dates[targetIndex(t-1)],type:kind,symbol:s.symbol,weightBefore:before[j],weightAfter:weights[j],weightChange:weights[j]-before[j],exposureBefore:beforeExposure,exposureAfter:exposure,cashBefore:before[bil],cashAfter:weights[bil],state:target.state,inverse:s.leverage<0,leverage:s.leverage,rebalanceOnly,reason:rebalanceOnly?'rebalancing_band':'target_update',reasonDate:date,band:cfg.band});
         });
       }
       if(weights[bil]<-1e-9)financingDays++;
@@ -474,12 +500,12 @@
       if(weights.some((w,j)=>w>1e-9&&data.symbols[j].synthetic))syntheticDays++;
       if(t===start)reasons.push('窗口首日收盘继承前一交易日目标，净值从1起算；首日不虚构成交，下一交易日起计收益和成本。');
       if(rebalanced&&rebalanceOnly)reasons.push(`目标不变，实际资金权重偏离超过 ${number(cfg.band*100)} 个百分点，按自定义再平衡带调仓。`);
-      points[date]={signalDate:data.dates[t-1],state:target.state,selection:target.selection,holdings:weights.flatMap((w,j)=>j!==bil&&w>1e-9?[[data.symbols[j].symbol,w]]:[]),cash:weights[bil],exposure,targetHoldings:target.weights.flatMap((w,j)=>j!==bil&&w>1e-9?[[data.symbols[j].symbol,w]]:[]),targetCash:target.weights[bil],targetExposure:target.exposure,rebalanced,reasons,nav,benchmarkNav,band:cfg.band,rebalanceOnly,momentum:target.momentum,blueLadder:target.blueLadder,blueComparison:target.blueComparison,creditStack:target.creditStack,bearGate:target.bearGate,drawdownGate:target.drawdownGate,cccStressBlueLimit:target.cccStressBlueLimit,yellowLock:target.yellowLock,financingInterest,financingAnnualRate:FINANCING_RATE};
+      points[date]={signalDate:data.dates[targetIndex(t-1)],state:target.state,selection:target.selection,holdings:weights.flatMap((w,j)=>j!==bil&&w>1e-9?[[data.symbols[j].symbol,w]]:[]),cash:weights[bil],exposure,targetHoldings:target.weights.flatMap((w,j)=>j!==bil&&w>1e-9?[[data.symbols[j].symbol,w]]:[]),targetCash:target.weights[bil],targetExposure:target.exposure,rebalanced,reasons,nav,benchmarkNav,band:cfg.band,rebalanceOnly,momentum:target.momentum,blueLadder:target.blueLadder,blueComparison:target.blueComparison,creditStack:target.creditStack,bearGate:target.bearGate,drawdownGate:target.drawdownGate,cccStressBlueLimit:target.cccStressBlueLimit,yellowLock:target.yellowLock,financingInterest,financingAnnualRate:FINANCING_RATE};
       history.push({date,nav});benchmark.push({date,nav:benchmarkNav});turnover.push(turn);
     }
     const metrics=stats(history,turnover),benchmarkMetrics=stats(benchmark,turnover.map(()=>0));
     return{config:cfg,range:{start:data.dates[start],end:data.dates[end]},history,benchmark,metrics,benchmarkMetrics,details:{points,trades},audit:{inputHash:data.meta.inputHash,...(data.meta.dgs30CSVHash?{dgs30CSVHash:data.meta.dgs30CSVHash}:{}),days:history.length,bearGateDays,bearGateAppliedDays,drawdownGateDays,drawdownGateAppliedDays,cccStressBlueLimitDays,limitedDays,syntheticDays,rebalanceDays,costPaid,financingDays,financingInterestPaid,financingAnnualRate:FINANCING_RATE},sourceMeta:copy(data.meta)};
   }
-  function readings(data){return Object.fromEntries(data.dates.map((d,i)=>{const v=data.readings[i],mask=data.signals[i];return[d,{temperature:v[0],tdc:v[1],creditSpread:v[2],creditMA200:v[3],creditPercentile:v[4],creditSourceDate:v[5],creditStress:!!(mask&(1<<7)),creditAbove:!!(mask&(1<<8))}];}));}
-  root.CustomBacktest=Object.freeze({RULES,ACTIONS,actionLabel,MOMENTUM_METHODS,DEFAULT_MOMENTUM_METHOD,BEAR_GATE_METHODS,DEFAULT_BEAR_GATE_METHOD,bearGateEnsemble,defaults,validate,ruleValueMax,usesMomentum,usesDgs30,usesTriangle,hasTriangleCoverage,resolveTarget,bearGate200,momentumChoice,stats,run,readings});
+  function readings(data){return Object.fromEntries(data.dates.flatMap((d,i)=>{const v=data.readings[i],mask=data.signals[i];return v?[[d,{temperature:v[0],tdc:v[1],creditSpread:v[2],creditMA200:v[3],creditPercentile:v[4],creditSourceDate:v[5],creditStress:!!(mask&(1<<7)),creditAbove:!!(mask&(1<<8))}]]:[];}));}
+  root.CustomBacktest=Object.freeze({RULES,ACTIONS,actionLabel,MOMENTUM_METHODS,DEFAULT_MOMENTUM_METHOD,BEAR_GATE_METHODS,DEFAULT_BEAR_GATE_METHOD,bearGateEnsemble,defaults,validate,ruleValueMax,usesMomentum,usesDgs30,usesTriangle,hasTriangleCoverage,resolveTarget,bearGate200,momentumChoice,stats,extendInputs,run,readings});
 })(typeof window!=='undefined'?window:globalThis);

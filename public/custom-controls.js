@@ -2,12 +2,12 @@
   'use strict';
   const $=s=>document.querySelector(s),esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const STORAGE='dual-model-custom-v1';
-  function attach(onResult){
+  function attach(onResult,getLatest=()=>({})){
     const C=root.CustomBacktest,form=$('#custom-form'),status=$('#custom-status'),button=$('#run-custom');
     const asset=form.elements.namedItem('asset'),method=form.elements.namedItem('momentumMethod');
     const methodField=$('#momentum-method-field'),assetLabel=asset.closest('label');
     method.innerHTML=Object.entries(C.MOMENTUM_METHODS).map(([id,option])=>`<option value="${id}">${esc(option.label)}</option>`).join('');
-    let data=null,loading=null,ratesLoading=null,lastResult=null,busy=false;
+    let data=null,loading=null,ratesLoading=null,lastResult=null,frozenInputs=null,busy=false;
     const initial=C.defaults(),triangleDefault=initial.rules.find(r=>r.id==='triangle');
     let draft=initial,migratedYellow=false,migratedTools=false,migratedBlueComparison=false,migratedBlueUnlock=false,migratedCreditStack=false,migratedBearGate=false,migratedMomentum=false;
     try{const saved=JSON.parse(localStorage.getItem(STORAGE));if(saved){
@@ -123,14 +123,17 @@
             return r.json();
           }):null
         ]);
-        const source={...panel,vixTermRelease,...(rates?{dgs30:rates.yieldsBp,meta:{...panel.meta,dgs30CSVHash:rates.csvSHA256}}:{})};
+        const latest=getLatest();
+        const vix=C.usesTriangle(settings)&&C.hasTriangleCoverage(latest.vix,vixTermRelease?.through??panel.meta.end)?latest.vix:vixTermRelease;
+        const source=C.extendInputs(panel,latest.extension,rates,vix,settings);
         await new Promise(resolve=>setTimeout(resolve,0));
         const result=C.run(source,{
           ...settings,
           start:registered?settings.start:source.meta.start,
-          end:registered?settings.end:source.meta.end
+          end:source.meta.end
         });
         lastResult=result;
+        frozenInputs=C.extendInputs(panel,null,rates,vixTermRelease,settings);
         let saved=true;
         if(!registered)try{localStorage.setItem(STORAGE,JSON.stringify(result.config));}catch{saved=false;}
         $('#custom-stale').hidden=true;
@@ -151,7 +154,13 @@
     form.addEventListener('registered-backtest',event=>generate(event.detail,true));
     $('#reset-custom').addEventListener('click',()=>{write(C.defaults());dirty();});
     function download(name,text,type){const url=URL.createObjectURL(new Blob([text],{type})),a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
-    $('#export-custom-settings').addEventListener('click',()=>{if(lastResult)download('自定义策略_设置.json',JSON.stringify({config:lastResult.config,inputHash:lastResult.audit.inputHash,metrics:lastResult.metrics,range:lastResult.range,audit:lastResult.audit},null,2),'application/json;charset=utf-8');});
+    $('#export-custom-settings').addEventListener('click',()=>{
+      if(!lastResult)return;
+      const exportResult=lastResult.range.end>frozenInputs.meta.end
+        ?C.run(frozenInputs,{...lastResult.config,end:frozenInputs.meta.end}):lastResult;
+      const {config,metrics,range,audit}=exportResult;
+      download('自定义策略_设置.json',JSON.stringify({config,inputHash:audit.inputHash,metrics,range,audit},null,2),'application/json;charset=utf-8');
+    });
     $('#export-custom-daily').addEventListener('click',()=>{
       if(!lastResult)return;
       const rows=[['日期','信号日','净值','QQQ净值','持仓','现金权重（负数为融资负债）','底层敞口','实际调仓','生效规则','依据','本期融资利息（初始资金单位）','融资年利率','CCC压力位蓝点限制已启用','CCC极端压力','波动率监测标的（当日常态底层）','10日年化实现波动率','本层前目标敞口','压力期多头上限','本层后目标敞口','本层实际限制目标','CCC数据观察日','回撤闸已启用','回撤闸触发状态','回撤闸本次减半','回撤闸参考净值','回撤闸参考峰值','回撤闸参考回撤']];

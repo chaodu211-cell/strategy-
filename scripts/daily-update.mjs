@@ -9,6 +9,7 @@ import {advanceLedger,queueTargets,publicLedger} from '../lib/forward-ledger.js'
 import {latestModels} from '../worker/index.js';
 import {extendDgs30} from './dgs30.mjs';
 import {extendResearchHistory,portfolioTarget} from '../lib/research-history.js';
+import {customHistory,customMarketInput,customSignalInput,validationHistory} from '../lib/validation-history.js';
 import '../public/custom-backtest.js';
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'..'),C=globalThis.CustomBacktest;
 const read=async p=>JSON.parse(await readFile(resolve(root,p),'utf8'));
@@ -20,7 +21,8 @@ if(state.configHash&&state.configHash!==configHash)throw new Error('跟踪参数
 state.configHash=configHash;
 let status={checkedAt,status:'pending',message:'等待完整的ETF收盘行情与两个模型输入。',sources:[],warnings:[]};
 let live=null,market,remote;
-const [base,seed,prior]=await Promise.all([read('public/data.json'),read('lib/live-seed.json'),read('public/daily-live.json').catch(()=>null)]);
+const [base,seed,prior,priorForward]=await Promise.all([read('public/data.json'),read('lib/live-seed.json'),
+  read('public/daily-live.json').catch(()=>null),read('public/forward.json').catch(()=>null)]);
 let vixTermRelease=prior?.vixTermRelease;
 const version=seed.researchVersion;
 const sameRelease=prior?.data?.meta?.researchVersion===version;
@@ -71,11 +73,9 @@ try{
       const expected=market.rows[i-1].date;
       if(expected!==(extra.at(-1)?.date||panel.dates.at(-1)))throw new Error('自定义信号缺日，停止追加目标 '+row.date);
       const before=market.rows[i-1];
-      const returns=panel.symbols.map(s=>s.synthetic?0:r.prices[s.symbol]/before.prices[s.symbol]-1);
-      const costs=panel.symbols.map(s=>r.costs[s.symbol]||0),tradable=panel.symbols.reduce((m,s,j)=>m|(r.tradable[s.symbol]===true?1<<j:0),0);
-      const f=row.fit,c=row.credit,flags=[f.red,f.red_ad,f.blue,f.blue_soft,f.yellow,c.top,c.bot,c.stress,c.above200];
+      const marketInput=customMarketInput(panel.symbols,before,r);
       const peak=Math.max(...market.rows.slice(Math.max(0,i-251),i+1).map(x=>x.prices.QQQ));
-      extra.push({date:row.date,returns,costs,tradable,signals:flags.reduce((m,f,j)=>m|(f?1<<j:0),0),tdc:f.tdc,dd52:r.prices.QQQ/peak-1});
+      extra.push({...marketInput,...customSignalInput(row),dd52:r.prices.QQQ/peak-1});
     }
     state.customRows=extra;
     for(const r of extra){panel.dates.push(r.date);panel.returns.push(r.returns);panel.costs.push(r.costs);panel.tradable.push(r.tradable);panel.signals.push(r.signals);panel.yellowContext.tdc.push(r.tdc);panel.yellowContext.qqqDrawdown52.push(r.dd52);}
@@ -86,15 +86,15 @@ try{
     if(C.usesTriangle(registered)){
       panel.vixTermRelease=vixTermRelease??await read('public/vix-term-release.json');
     }
+    if(C.usesDgs30(registered)){
+      panel.dgs30=(await read('public/dgs30.json')).yieldsBp;
+      const warning=await extendDgs30(panel,extra);
+      if(warning)status.warnings.push(warning);
+    }
     if(C.usesTriangle(registered)&&!C.hasTriangleCoverage(panel.vixTermRelease,panel.meta.end)){
       status.warnings.push('vix反转信号尚未覆盖最新信号日，已登记自定义策略暂缓产生新目标。');
     }else{
       const custom=C.validate({...registered,end:panel.meta.end},panel),memory=C.RULES.map(()=>-1e9);let latest;
-      if(C.usesDgs30(custom)){
-        panel.dgs30=(await read('public/dgs30.json')).yieldsBp;
-        const warning=await extendDgs30(panel,extra);
-        if(warning)status.warnings.push(warning);
-      }
       for(let t=0;t<panel.dates.length;t++)latest=C.resolveTarget(panel,custom,t,memory);
       targets[config.customId||'custom-momentum']={configVersion:hash(config.custom),signalDate:panel.dates.at(-1),weights:Object.fromEntries(panel.symbols.map((s,j)=>[s.symbol,latest.weights[j]]).filter(([,w])=>w!==0)),selection:latest.selection,state:latest.state,reasons:latest.reasons,...(latest.vixReversalSignalDate?{vixReversalSignalDate:latest.vixReversalSignalDate}:{})};
     }
@@ -117,6 +117,9 @@ try{
   console.error('Daily update: '+error.message);
 }
 let researchHistory=sameRelease?prior?.researchHistory:null;
+const registration=state.strategies.find(s=>s.id===config.customId&&!s.archivedAt);
+let validation=sameRelease&&priorForward?.validation?.customVersion===registration?.configVersion?priorForward?.validation:null;
+let customExtension=sameRelease?prior?.customHistory:null;
 if(market){
   try{
     const [daily,details]=await Promise.all([read('public/history-daily.json'),read('public/history-positions.json')]);
@@ -126,14 +129,30 @@ if(market){
     if(status.status==='ok'){status.status='degraded';status.message='回测行情续算待补查。';}
   }
 }
+if(researchHistory&&registration){
+  try{
+    const [daily,details,panel,rates,vix]=await Promise.all([
+      read('public/history-daily.json'),read('public/history-positions.json'),read('public/custom-inputs.json'),
+      read('public/dgs30.json'),vixTermRelease??read('public/vix-term-release.json')
+    ]);
+    const extension=customHistory(panel,researchHistory,state.customRows??[],market?.rows??[],customExtension);
+    const updated=validationHistory(daily,details,researchHistory,panel,extension,rates,vix,registration);
+    customExtension=extension;
+    validation=updated;
+  }catch(error){
+    status.warnings.push('样本外检验续算：'+error.message);
+    if(status.status==='ok')status.status='degraded';
+  }
+}
 live??=sameRelease?prior:{data:base,monitor:{pollSeconds:60,sources:status.sources,portfolioDate:base.meta.signalDate}};
 if(live){
   live.researchHistory=researchHistory;
+  if(customExtension)live.customHistory=customExtension;
   if(vixTermRelease)live.vixTermRelease=vixTermRelease;
   live.monitor={...live.monitor,checkedAt,status:status.status,warnings:status.warnings};
 }
 state.lastCheck=status;
-await save('tracking/state.json',state);await save('public/forward.json',publicLedger(state,status));
+await save('tracking/state.json',state);await save('public/forward.json',{...publicLedger(state,status),...(validation?{validation}:{})});
 if(live)await save('public/daily-live.json',live);
 await save('public/update-status.json',status);
 console.log(JSON.stringify({status:status.status,startDate:state.startDate,points:state.strategies.map(s=>({id:s.id,days:s.points.length,date:s.lastDate})),warnings:status.warnings}));

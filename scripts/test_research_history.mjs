@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
 import {extendResearchHistory} from '../lib/research-history.js';
+import {customHistory,customMarketInput,validationHistory} from '../lib/validation-history.js';
 
 const read=path=>JSON.parse(readFileSync(new URL('../'+path,import.meta.url)));
 const [base,seed,daily,details]=['public/data.json','lib/live-seed.json','public/history-daily.json','public/history-positions.json'].map(read);
@@ -41,3 +42,29 @@ const sample=series.dates.slice(-3).map((date,i)=>({date,nav:series.nav.at(i-3)}
 const peak=Math.max(...sample.map(row=>row.nav));
 assert.equal(chart.summarize(sample).currentDrawdown,sample.at(-1).nav/peak-1);
 console.log(JSON.stringify({researchContinuation:true,marketAheadOfSignals:true,versionCheck:true,liveDrawdown:true}));
+
+const panel=read('public/custom-inputs.json'),C=globalThis.CustomBacktest;
+const lateMarket=[...market,tradeDay('2026-10-27',.9)];
+const research=extendResearchHistory(base,seed,daily,details,lateMarket,signals,first,lateMarket.at(-1).closeAt);
+const confirmed=[{...customMarketInput(panel.symbols,baseline,market.at(-2)),dd52:-.01}];
+const custom=customHistory(panel,research,confirmed,lateMarket);
+assert.equal(custom.signalThrough,'2026-10-23');
+assert.deepEqual(custom.rows.map(row=>row.date),research.dates);
+assert.ok(!Object.hasOwn(custom.rows.at(-1),'signals'));
+assert.deepEqual(customHistory(panel,research,confirmed,[],custom),custom);
+
+const config={...C.defaults(),start:panel.meta.start};
+for(const rule of config.rules)rule.action='ignore';
+const projection=C.extendInputs(panel,custom,null,null,config);
+const full=C.run(projection,{...config,end:projection.meta.end});
+const frozen=C.run(panel,config);
+assert.equal(full.details.points[seed.date].nav,frozen.history.at(-1).nav);
+assert.equal(full.details.points['2026-10-27'].signalDate,'2026-10-23');
+assert.ok(full.details.points['2026-10-27'].nav<full.details.points['2026-10-26'].nav);
+const validation=validationHistory(daily,details,research,panel,custom,null,null,{id:'custom-test',configSnapshot:config,configVersion:'test'});
+for(const id of [...Object.keys(seed.config),'custom-test']){
+  assert.equal(validation.strategies[id][0].date,seed.date);
+  assert.equal(validation.strategies[id][0].nav,1);
+  assert.equal(validation.strategies[id].at(-1).date,'2026-10-27');
+}
+console.log(JSON.stringify({sharedOutOfSampleBaseline:true,exeterEngineContinuation:true,heldLastVerifiedSignal:true}));
