@@ -61,17 +61,12 @@ function registeredAllocation(){
 function init() {
   const {meta,models} = DATA;
   $$('[data-signal-date]').forEach(el => el.textContent = meta.signalDate.replaceAll('-','.'));
-  $('#freshness-copy').textContent = `组合目标仓位截至 ${meta.signalDate}；模型各自最新日期见下方。仓位按原策略的次日收盘口径计算。`;
-  $('#tdc-top').textContent = fmt(models.fit.tdc);
-  $('#credit-top').textContent = fmt(models.credit.percentile);
-  $('#fit-summary').textContent = models.fit.state;
-  $$('.fit-overview .tag, .signal-panel:first-child .signal-title .tag').forEach(el=>{el.textContent=models.fit.state==='未触发离场约束'?'择时许可':'离场约束';});
-  $$('.credit-overview .tag, .signal-panel:last-child .signal-title .tag').forEach(el=>{el.textContent=models.credit.phase==='压力'?'信用压力':models.credit.phase;});
+  $('.signal-panel:first-child .signal-title .tag').textContent=models.fit.state==='未触发离场约束'?'择时许可':'离场约束';
+  $('.signal-panel:last-child .signal-title .tag').textContent=models.credit.phase==='压力'?'信用压力':models.credit.phase;
   $('#fit-state-title').textContent = models.fit.state;
   $('#fit-state-detail').textContent = models.fit.facts.slice(0,2).join(' ');
   $('#credit-state-title').textContent = `${models.credit.above200?'高于':'不高于'}200日均线 · ${models.credit.phase}阶段`;
   $('#credit-state-detail').textContent = models.credit.facts.at(-1);
-  $('#credit-summary').textContent = `利差 ${fmt(models.credit.spread,2)}%，${models.credit.above200?'高于':'不高于'}200日均线`;
   $('#fit-temperature').textContent = fmt(models.fit.temperature);
   $('#fit-tdc').textContent = fmt(models.fit.tdc);
   $('#credit-spread').innerHTML = `${fmt(models.credit.spread,2)}<small>%</small>`;
@@ -535,7 +530,6 @@ function renderMonitor() {
   $('#connection-badge').innerHTML=`<i></i> ${okay?'仓库已连接':degraded?'更新需关注':'正在连接仓库'}`;
   $('#connection-badge').classList.toggle('connection-degraded',degraded);
   $('#monitor-dot').className='monitor-live-dot '+(okay?'healthy':degraded?'degraded':'');
-  $('#freshness-title').textContent=okay?'仓库已同步':degraded?'保留完整数据':'模型数据同步中';
   $('#last-checked').textContent=m?.checkedAt?`最近检查 ${readableTime(m.checkedAt)}`:'首次检查中';
   if (m?.sources?.length) $('#repo-status-grid').innerHTML=m.sources.map(source=>{
     const repo=source.repo || source.repository || (source.id==='credit'?'chaodu211-cell/ccc-spread':'chaodu211-cell/best-weights');
@@ -547,7 +541,7 @@ function renderMonitor() {
     return `<article class="repo-status"><div class="repo-heading"><a href="${url}" target="_blank" rel="noopener"><span class="github-mark">⌘</span>${escapeHTML(repo.split('/').at(-1))} ↗</a><span class="tag ${healthy?'green':'amber'}">${healthy?'已连接':state==='error'?'读取失败':'需关注'}</span></div><div class="repo-dates"><span>实际观察 / 信号日<strong>${escapeHTML(date)}</strong></span><span>仓库版本<strong>${sha?`<a href="${url}/commit/${encodeURIComponent(sha)}" target="_blank" rel="noopener">${escapeHTML(sha.slice(0,7))} ↗</a>`:'未读取'}</strong></span></div><p>${escapeHTML(source.message || source.note || source.detail || (healthy?'已读取上游发布数据':'保留最后可验证数据'))}</p></article>`;
   }).join('');
   const warnings=[...(m?.warnings || [])].map(w=>typeof w==='string'?w:(w.message||w.reason||JSON.stringify(w)));
-  if(status==='loading')warnings.push('首次联网校验尚未完成，下方先展示已保存的完整结果。');
+  if(status==='loading')warnings.push('首次联网校验尚未完成，页面先展示已保存的完整结果。');
   $('#monitor-warnings').hidden=warnings.length===0;
   $('#monitor-warnings').innerHTML=warnings.map(w=>`<p>◷ ${escapeHTML(w)}</p>`).join('');
   $('#refresh-live').disabled=refreshing;
@@ -582,7 +576,11 @@ async function bootstrap() {
     const base=await response.json();DATA=base;researchVersion=base.meta.researchVersion??null;
     try{const saved=JSON.parse(localStorage.getItem('dual-model-last-verified'));if(saved?.schema===1 && saved.data?.meta?.signalDate>=base.meta.signalDate&&(!researchVersion||saved.data.meta.researchVersion===researchVersion)){DATA=saved.data;researchExtension=saved.researchHistory??null;lastSuccessMonitor=saved.monitor;MONITOR={...saved.monitor,status:'loading',warnings:['正在重新校验仓库，暂时显示此设备上次保存的结果。']};}}catch{}
     init();await refreshLive();
-  }catch(error){$('#loading-error').hidden=false;$('#freshness-copy').textContent=error.message;}
+  }catch(error){
+    const notice=$('#loading-error');
+    notice.textContent=`数据载入失败（${error.message}）。请刷新页面。`;
+    notice.hidden=false;
+  }
 }
 bootstrap();
 setInterval(()=>{if(!document.hidden)refreshLive();},60000);
