@@ -30,4 +30,11 @@ assert.equal(point(input,cfg(),2).creditStack,null,'A signal must not change sam
 const future=clone(both);future.signals[7]=511;future.returns[7]=[1,1,0];assert.deepEqual(C.run(future,cfg()).history.slice(0,6),C.run(both,cfg()).history.slice(0,6));
 const cap=cfg();cap.baseExposure=3;cap.rules[5].value=3;cap.rules[8].value=3;near(point(input,cap).targetExposure,3,'Existing ordinary exposure cap applies after the product');
 const zero=cfg();zero.rules[5].value=0;near(point(input,zero).targetExposure,0);
+const history=C.RULES.map(()=>-1e9),settings=C.validate(cfg(),both);
+for(let i=0;i<2;i++)C.resolveTarget(both,settings,i,history);
+const breakdown=C.resolveTarget(both,settings,2,history,true).allocationBreakdown;
+assert.equal(breakdown.baseExposure,1);
+assert.deepEqual(breakdown.steps.map(({kind,value,before,after})=>[kind,value,before,after]),
+  [['multiply',.75,1,.75],['multiply',.3,.75,.75*.3]]);
+assert.deepEqual(breakdown.skipped.map(({label,value,priority})=>[label,value,priority]),[['利差高于200日线',.4,80]]);
 console.log(JSON.stringify({creditStack:true,twoFactorsOnly:true,statePriorityAndTies:true,otherRulePriority:true,blueComparisonUsesProduct:true,expiryAndConditionExit:true,nextClose:true,noLookahead:true,optOut:true,defaultAndMigration:true,exposureCap:true}));

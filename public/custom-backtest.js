@@ -117,7 +117,7 @@
     if(usesMomentum(c)||c.momentum===undefined||method!==undefined)c.momentum=momentumDefaults(method);
     return c;
   }
-  function resolveTarget(data,cfg,t,last){
+  function resolveTarget(data,cfg,t,last,explain=false){
     const drawdownGate=cfg.drawdownGateEnabled?advanceDrawdownGate(data,t,last):null;
     const mask=data.signals[t];
     RULES.forEach((r,i)=>{
@@ -261,7 +261,58 @@
     if(tool?.synthetic)reasons.push(`${tool.symbol} 为研究合成序列，不是当时已上市ETF。`);
     if(drawdownGate)last.drawdownGate.prevWeights=weights.map((w,j)=>j===bil?0:w);
     const vixReversalSignalDate=vixBottomFishing&&exposure>0?data.dates[winner.sourceIndex]:null;
-    return{weights,exposure,vixReversalSignalDate,drawdownGate,desired:requested,selection,momentum,blueLadder,blueComparison,creditStack,bearGate,cccStressBlueLimit,yellowLock,winner:winner?.id||null,state,reasons,limited,synthetic:!!tool?.synthetic};
+    let allocationBreakdown;
+    if(explain){
+      const steps=[];
+      let before=cfg.baseExposure;
+      function addStep(label,operation,after){
+        steps.push({label,...operation,before,after});
+        before=after;
+      }
+      function operationFor(rule){
+        if(rule.action==='flat')return {kind:'multiply',value:0};
+        if(isVixBottomFishing(rule)||rule.action==='long'||rule.action==='short'){
+          return {kind:'target',value:rule.action==='short'?-rule.value:rule.value};
+        }
+        if(rule.action==='blue_ladder'){
+          const {cap,count,steps}=blueLadder;
+          return {kind:'ladder',cap,count,steps,value:Math.min(1,count/steps)};
+        }
+        return {kind:'multiply',value:rule.value};
+      }
+      const selectedRules=creditStack?.selected?[top,creditState]:winner?[winner]:[];
+      for(const rule of selectedRules){
+        const operation=operationFor(rule);
+        const after=operation.kind==='multiply'?before*operation.value:rawRuleExposure(rule);
+        addStep(rule.label,operation,after);
+      }
+      if(bearGate?.applied)addStep('熊市闸门',{kind:'multiply',value:bearGate.multiplier},beforeBrake(winner));
+      if(drawdownGate?.applied){
+        if(before>3)addStep('回撤闸前的敞口上限',{kind:'cap',value:3},3);
+        addStep('回撤闸',{kind:'multiply',value:drawdownGate.multiplier},requested);
+      }
+      if(requested!==desired)addStep('策略敞口限制',{kind:'target',value:desired},desired);
+      if(Math.abs(desired-originalExposure)>1e-9)addStep('可交易工具限制',{kind:'target',value:originalExposure},originalExposure);
+      if(cccStressBlueLimit?.applied){
+        const {cap,monitorAsset,volatility,riskBudget,maxExposure}=cccStressBlueLimit;
+        addStep('CCC压力位蓝点限制',{
+          kind:'volatilityCap',value:cap,monitorAsset,volatility,riskBudget,maxExposure,
+          factor:exposure/originalExposure
+        },exposure);
+      }
+      const skipped=active.filter(rule=>!selectedRules.includes(rule)).map(rule=>({
+        label:rule.label,priority:rule.priority,...operationFor(rule),
+        reason:applicable.includes(rule)?'优先级未选中':'蓝点敞口比较未通过'
+      }));
+      allocationBreakdown={baseExposure:cfg.baseExposure,steps,skipped};
+    }
+    return{weights,exposure,vixReversalSignalDate,drawdownGate,desired:requested,selection,momentum,blueLadder,blueComparison,creditStack,bearGate,cccStressBlueLimit,yellowLock,winner:winner?.id||null,state,reasons,limited,synthetic:!!tool?.synthetic,...(allocationBreakdown?{allocationBreakdown}:{})};
+  }
+  function publishedTarget(data,t,target,configVersion){
+    const {selection,state,reasons,allocationBreakdown,vixReversalSignalDate}=target;
+    return {configVersion,signalDate:data.dates[t],
+      weights:Object.fromEntries(data.symbols.flatMap((s,i)=>target.weights[i]===0?[]:[[s.symbol,target.weights[i]]])),
+      selection,state,reasons,allocationBreakdown,...(vixReversalSignalDate?{vixReversalSignalDate}:{})};
   }
   function advanceDrawdownGate(data,t,last){
     const m=last.drawdownGate||(last.drawdownGate={nav:1,peak:1,active:false,prevWeights:null,triggerDate:null,releaseDate:null});
@@ -507,5 +558,5 @@
     return{config:cfg,range:{start:data.dates[start],end:data.dates[end]},history,benchmark,metrics,benchmarkMetrics,details:{points,trades},audit:{inputHash:data.meta.inputHash,...(data.meta.dgs30CSVHash?{dgs30CSVHash:data.meta.dgs30CSVHash}:{}),days:history.length,bearGateDays,bearGateAppliedDays,drawdownGateDays,drawdownGateAppliedDays,cccStressBlueLimitDays,limitedDays,syntheticDays,rebalanceDays,costPaid,financingDays,financingInterestPaid,financingAnnualRate:FINANCING_RATE},sourceMeta:copy(data.meta)};
   }
   function readings(data){return Object.fromEntries(data.dates.flatMap((d,i)=>{const v=data.readings[i],mask=data.signals[i];return v?[[d,{temperature:v[0],tdc:v[1],creditSpread:v[2],creditMA200:v[3],creditPercentile:v[4],creditSourceDate:v[5],creditStress:!!(mask&(1<<7)),creditAbove:!!(mask&(1<<8))}]]:[];}));}
-  root.CustomBacktest=Object.freeze({RULES,ACTIONS,actionLabel,MOMENTUM_METHODS,DEFAULT_MOMENTUM_METHOD,BEAR_GATE_METHODS,DEFAULT_BEAR_GATE_METHOD,bearGateEnsemble,defaults,validate,ruleValueMax,usesMomentum,usesDgs30,usesTriangle,hasTriangleCoverage,resolveTarget,bearGate200,momentumChoice,stats,extendInputs,run,readings});
+  root.CustomBacktest=Object.freeze({RULES,ACTIONS,actionLabel,MOMENTUM_METHODS,DEFAULT_MOMENTUM_METHOD,BEAR_GATE_METHODS,DEFAULT_BEAR_GATE_METHOD,bearGateEnsemble,defaults,validate,ruleValueMax,usesMomentum,usesDgs30,usesTriangle,hasTriangleCoverage,resolveTarget,publishedTarget,bearGate200,momentumChoice,stats,extendInputs,run,readings});
 })(typeof window!=='undefined'?window:globalThis);

@@ -53,7 +53,8 @@ function registeredAllocation(){
   const terms=holdings.map(h=>`${h.symbol} ${weight(h.weight)} × ${h.leverage}`).join(' + ');
   return {id,name,configSnapshot,holdings,cash,exposure,baseExposure:configSnapshot.baseExposure,
     selection:pending.selection,signalDate:pending.signalDate,state:pending.state,
-    summary:pending.state,formula:terms?`${terms} ≈ ${fmt(exposure,2)} 倍底层敞口`:'权益工具 0% → 底层敞口 0倍',
+    summary:pending.state,allocationBreakdown:pending.allocationBreakdown,
+    formula:terms?`${terms} ≈ ${fmt(exposure,2)} 倍底层敞口`:'权益工具 0% → 底层敞口 0倍',
     reasons:(pending.reasons??[]).map(detail=>({title:'',detail,active:true}))};
 }
 

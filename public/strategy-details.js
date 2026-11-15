@@ -29,7 +29,26 @@
   }
   function currentContent(s){
     const holdings=s.holdings.map(h=>`${h.symbol} ${pct(h.weight)}`),cash=s.cash<0?`融资负债 ${pct(-s.cash)}`:`BIL ${pct(s.cash)}`;
-    return `<section class="strategy-detail-section strategy-current"><div class="strategy-current-heading"><h3>当前目标仓位</h3><span>信号日 ${esc(s.signalDate)}</span></div><p class="strategy-current-holdings">${esc([...holdings,cash].join(' / '))}</p><p>底层敞口 <strong>${Number(s.exposure).toFixed(2)}倍</strong></p><p>${esc(s.summary)}</p><div class="strategy-current-formula">${esc(s.formula)}</div></section>`;
+    const calculation=s.allocationBreakdown?allocationCalculation(s.allocationBreakdown):`<p>${esc(s.summary)}</p>`;
+    return `<section class="strategy-detail-section strategy-current"><div class="strategy-current-heading"><h3>当前目标仓位</h3><span>信号日 ${esc(s.signalDate)}</span></div><p class="strategy-current-holdings">${esc([...holdings,cash].join(' / '))}</p><p>底层敞口 <strong>${Number(s.exposure).toFixed(2)}倍</strong></p>${calculation}<div class="strategy-current-formula">${esc(s.formula)}</div></section>`;
+  }
+  function allocationCalculation({baseExposure,steps,skipped}){
+    const multiplier=step=>{
+      switch(step.kind){
+        case 'multiply':return `× ${num(step.value)}`;
+        case 'target':return `设为 ${num(step.value)} 倍`;
+        case 'ladder':return `${num(step.cap)} 倍 × ${num(step.value)}（${step.count} 个蓝点 / ${step.steps} 批，上限 1）`;
+        case 'cap':return `上限 ${num(step.value)} 倍`;
+        case 'volatilityCap':return `上限 ${num(step.value)} 倍 · 实际折算 × ${num(step.factor)}`;
+      }
+    };
+    const row=(label,value)=>`<div class="strategy-rule-row"><dt>${esc(label)}</dt><dd>${value}</dd></div>`;
+    const applied=steps.map(step=>{
+      const cap=step.kind==='volatilityCap'?`<br>${esc(step.monitorAsset)} 10 日年化波动率 ${num(100*step.volatility)}%。上限 = min(${num(step.maxExposure)} 倍, ${pct(step.riskBudget)} ÷ ${num(100*step.volatility)}%)。`:'';
+      return row(step.label,`<strong>${esc(multiplier(step))}</strong> · ${num(step.before)} 倍 → ${num(step.after)} 倍${cap}`);
+    }).join('');
+    const candidates=skipped.length?`<p class="strategy-skipped-rules">同时触发但未采用</p><ul class="strategy-active-rules">${skipped.map(step=>`<li>${esc(step.label)} · 配置 ${esc(multiplier(step))} · 优先级 ${esc(step.priority)} · ${esc(step.reason)}</li>`).join('')}</ul>`:'';
+    return `<div class="strategy-allocation-breakdown"><h4>敞口计算</h4><dl class="strategy-rule-list">${row('常态基准',`<strong>${num(baseExposure)} 倍</strong>`)}${applied}</dl>${candidates}</div>`;
   }
   function buildContent(s,p){
     const active=(s.reasons||[]).filter(r=>r.active);

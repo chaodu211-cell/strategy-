@@ -5,7 +5,7 @@ const C=globalThis.CustomBacktest,clone=structuredClone;
 const dates=Array.from({length:240},(_,i)=>new Date(Date.UTC(2007,0,3+i)).toISOString().slice(0,10));
 const data={schemaVersion:1,meta:{start:dates[0],end:dates.at(-1)},signalTypes:C.RULES.map(r=>r.id),dates,symbols:[{symbol:'QQQ',underlying:'QQQ',leverage:1},{symbol:'TQQQ',underlying:'QQQ',leverage:3},{symbol:'SOXX',underlying:'SOXX',leverage:1},{symbol:'SOXL',underlying:'SOXX',leverage:3},{symbol:'PSQ',underlying:'QQQ',leverage:-1},{symbol:'BIL',underlying:'BIL',leverage:0}],returns:dates.map((_,i)=>{const q=(i%2?1:-1)*.005-.001,s=(i%2?1:-1)*.04-.005;return[q,3*q,s,3*s,-q,0];}),costs:dates.map(()=>[0,0,0,0,0,0]),tradable:dates.map(()=>63),signals:dates.map((_,i)=>i>=30&&i<=40?(1<<7)|(1<<8):0)};
 function config(){const c=C.defaults();c.start=dates[20];c.end=dates.at(-1);c.asset='SOXX';c.baseExposure=3;c.costMultiplier=0;c.band=0;c.cccStressBlueLimitEnabled=true;for(const r of c.rules)r.action='ignore';c.rules[2].asset='QQQ';return c;}
-function target(d,c,t){const last=C.RULES.map(()=>-1e9);let p;for(let i=0;i<=t;i++)p=C.resolveTarget(d,C.validate(c,d),i,last);return p;}
+function target(d,c,t){const last=C.RULES.map(()=>-1e9);let p;for(let i=0;i<=t;i++)p=C.resolveTarget(d,C.validate(c,d),i,last,i===t);return p;}
 const near=(a,b,msg)=>assert.ok(Math.abs(a-b)<1e-11,msg??`${a} != ${b}`);
 const sigma=(d,t,j)=>{const a=d.returns.slice(t-9,t+1).map(r=>r[j]),m=a.reduce((s,v)=>s+v,0)/10;return Math.sqrt(a.reduce((s,v)=>s+(v-m)**2,0)/9)*Math.sqrt(252);};
 assert.equal(C.defaults().cccStressBlueLimitEnabled,false);
@@ -21,10 +21,15 @@ const inherit=config();inherit.rules[2].asset='inherit';near(target(data,inherit
 const maOnly=clone(data);maOnly.signals[30]=1<<8;near(target(maOnly,config(),30).exposure,3,'Above MA200 alone must not activate the feature');
 const blue=config(),blueData=clone(data);Object.assign(blue.rules[2],{action:'blue_ladder',value:6,steps:1,priority:99,onlyIfNotLower:false});blueData.signals[30]|=1<<2;
 const bt=target(blueData,blue,30);assert.equal(bt.winner,'blue');assert.equal(bt.selection,'QQQ');assert.equal(bt.cccStressBlueLimit.monitorAsset,'SOXX','Blue override must not replace the ordinary monitor');near(bt.cccStressBlueLimit.originalExposure,6);near(bt.exposure,cap);near(bt.weights[1],cap/3);assert.ok(bt.weights[5]>0,'Cap recomputes financing accurately');
+const [ladder,limit]=bt.allocationBreakdown.steps;
+assert.deepEqual([ladder.kind,ladder.cap,ladder.value,ladder.after],['ladder',6,1,6]);
+assert.deepEqual([limit.kind,limit.monitorAsset,limit.before],['volatilityCap','SOXX',6]);
+near(limit.after,bt.exposure);near(limit.factor*limit.before,limit.after);
 const qBlue=clone(blue);qBlue.asset='QQQ';qBlue.rules[2].asset='SOXX';const qb=target(blueData,qBlue,30);assert.equal(qb.selection,'SOXX');assert.equal(qb.cccStressBlueLimit.monitorAsset,'QQQ');near(qb.cccStressBlueLimit.volatility,sigma(data,30,0));near(qb.exposure,3,'QQQ ordinary + SOXX blue uses QQQ volatility and the absolute 3x ceiling');
 const sameBlue=clone(blue);sameBlue.rules[2].asset='SOXX';near(target(blueData,sameBlue,30).cccStressBlueLimit.cap,bt.cccStressBlueLimit.cap,'Changing only blue asset cannot change the volatility ceiling');
 const flatVol=clone(blueData);flatVol.returns=flatVol.returns.map(()=>[0,0,0,0,0,0]);near(target(flatVol,blue,30).exposure,3,'Zero volatility still respects 3x');
 const small=config();small.baseExposure=.2;near(target(data,small,30).exposure,.2,'Never raise a smaller original target');
+assert.deepEqual(target(data,small,30).allocationBreakdown.steps,[],'Only a cap that reduces exposure belongs in the applied steps');
 const zero=config();zero.baseExposure=0;near(target(data,zero,30).exposure,0);
 const short=config(),shortData=clone(data);Object.assign(short.rules[0],{action:'short',value:1,days:30,priority:99});shortData.signals[30]|=1;near(target(shortData,short,30).exposure,-1,'Short exposure stays unchanged');
 const older=clone(data);older.returns[20][2]=10;near(target(older,config(),30).exposure,cap,'Only the most recent 10 returns count');

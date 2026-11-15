@@ -95,8 +95,9 @@ try{
       status.warnings.push('vix反转信号尚未覆盖最新信号日，已登记自定义策略暂缓产生新目标。');
     }else{
       const custom=C.validate({...registered,end:panel.meta.end},panel),memory=C.RULES.map(()=>-1e9);let latest;
-      for(let t=0;t<panel.dates.length;t++)latest=C.resolveTarget(panel,custom,t,memory);
-      targets[config.customId||'custom-momentum']={configVersion:hash(config.custom),signalDate:panel.dates.at(-1),weights:Object.fromEntries(panel.symbols.map((s,j)=>[s.symbol,latest.weights[j]]).filter(([,w])=>w!==0)),selection:latest.selection,state:latest.state,reasons:latest.reasons,...(latest.vixReversalSignalDate?{vixReversalSignalDate:latest.vixReversalSignalDate}:{})};
+      const last=panel.dates.length-1;
+      for(let t=0;t<=last;t++)latest=C.resolveTarget(panel,custom,t,memory,t===last);
+      targets[config.customId||'custom-momentum']=C.publishedTarget(panel,last,latest,hash(config.custom));
     }
     state=queueTargets(state,targets,new Date().toISOString());
   }
