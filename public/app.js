@@ -23,6 +23,7 @@ const strategyDetails = StrategyDetails.attach(s=>{
   }
 });
 let selection = { family: 'simple', risk: 'balanced', window: 'inSample' };
+let allocationFamily = 'simple';
 const riskNames = {conservative:'稳健',balanced:'均衡',aggressive:'进取'};
 const riskDescriptions = {conservative:'控制敞口，优先防守',balanced:'参与增长，兼顾风险',aggressive:'放大参与，承受波动'};
 const fmt = (n, digits = 1) => Number(n).toFixed(digits);
@@ -31,10 +32,11 @@ const weight = (n) => pct(n, Math.abs(n * 100 - Math.round(n * 100)) < .001 ? 0 
 const escapeHTML = (str) => String(str).replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
 const displayName = (s) => s.family === 'fitted' ? `拟合·${riskNames[s.risk]}` : s.name;
 const selected = () => DATA.strategies.find(s => s.family === selection.family && s.risk === selection.risk);
+const selectedAllocation = () => allocationFamily==='custom'?registeredAllocation():selected();
 const holdingText = (s) => s.holdings.length ? s.holdings.map(h => `${h.symbol} ${weight(h.weight)}`).join(' / ') : '无权益持仓';
 document.addEventListener('registered-strategy',event=>{
   registeredStrategy=event.detail;
-  if(DATA)renderHoldings(selected());
+  if(DATA)renderAllocation();
 });
 
 function registeredAllocation(){
@@ -43,10 +45,15 @@ function registeredAllocation(){
   const {id,name,configSnapshot}=registeredStrategy;
   const {BIL:cash=0,...equity}=pending.weights;
   const leverage={QQQ:1,SOXX:1,QLD:2,USD:2,TQQQ:3,SOXL:3,PSQ:-1,SQQQ:-3};
-  const holdings=Object.entries(equity).map(([symbol,weight])=>({symbol,weight}));
-  const exposure=holdings.reduce((sum,h)=>sum+h.weight*leverage[h.symbol.replace(/^SYN_/,'')],0);
-  return {id,name,configSnapshot,holdings,cash,exposure,signalDate:pending.signalDate,state:pending.state,
-    summary:pending.state,formula:`${holdingText({holdings})} · 底层敞口 ${fmt(exposure,2)}×`,
+  const holdings=Object.entries(equity).map(([symbol,weight])=>{
+    const ticker=symbol.replace(/^SYN_/,'');
+    return {symbol,weight,leverage:leverage[ticker],underlying:['SOXX','USD','SOXL'].includes(ticker)?'SOXX':'QQQ'};
+  });
+  const exposure=holdings.reduce((sum,h)=>sum+h.weight*h.leverage,0);
+  const terms=holdings.map(h=>`${h.symbol} ${weight(h.weight)} × ${h.leverage}`).join(' + ');
+  return {id,name,configSnapshot,holdings,cash,exposure,baseExposure:configSnapshot.baseExposure,
+    selection:pending.selection,signalDate:pending.signalDate,state:pending.state,
+    summary:pending.state,formula:terms?`${terms} ≈ ${fmt(exposure,2)} 倍底层敞口`:'权益工具 0% → 底层敞口 0倍',
     reasons:(pending.reasons??[]).map(detail=>({title:'',detail,active:true}))};
 }
 
@@ -78,7 +85,11 @@ function init() {
   if (initialized) return;
   initialized = true;
   $('#refresh-live').addEventListener('click',()=>refreshLive());
-  $$('[data-family]').forEach(button=>button.addEventListener('click',()=>{selection.family=button.dataset.family;historySource='original';render();}));
+  $$('[data-family]').forEach(button=>button.addEventListener('click',()=>{
+    allocationFamily=button.dataset.family;
+    if(allocationFamily==='custom'){renderAllocation();return;}
+    selection.family=allocationFamily;historySource='original';render();
+  }));
   $$('[data-window]').forEach(button=>button.addEventListener('click',()=>{selection.window=button.dataset.window;chartRange=null;renderHistory();}));
   $$('[data-custom-chart-window]').forEach(button => button.addEventListener('click', () => {
     customChartWindow = button.dataset.customChartWindow;
@@ -90,7 +101,7 @@ function init() {
   attachHistoryRangeControls();
   CustomControls.attach((result,readings,registered)=>{chartRange=null;if(registered)customChartWindow='full';customResult=result;customReadings=readings;historySource='custom';$$('[data-history-source="custom"]').forEach(b=>b.disabled=false);renderHistory();},()=>({extension:customExtension,vix:latestVix}));
   $$('[data-history-source]').forEach(button=>button.addEventListener('click',()=>{historySource=button.dataset.historySource;renderHistory();}));
-  $('#open-strategy-details').addEventListener('click',()=>strategyDetails.open(selected(),'#open-strategy-details'));
+  $('#open-strategy-details').addEventListener('click',()=>strategyDetails.open(selectedAllocation(),'#open-strategy-details'));
   render();
   const observer = new IntersectionObserver(entries=>{
     const active = entries.filter(e=>e.isIntersecting).sort((a,b)=>a.boundingClientRect.top-b.boundingClientRect.top)[0];
@@ -100,34 +111,61 @@ function init() {
 }
 
 function render() {
-  $$('[data-family]').forEach(button=>{const active=button.dataset.family===selection.family;button.classList.toggle('active',active);button.setAttribute('aria-pressed',active);});
-  const current = selected();
-  $('#risk-options').innerHTML = DATA.strategies.filter(s=>s.family===selection.family).map(s=>`<button class="risk-option ${s.risk===selection.risk?'active':''}" data-risk="${s.risk}" aria-haspopup="dialog" aria-controls="strategy-dialog" aria-pressed="${s.risk===selection.risk}"><div><strong>${riskNames[s.risk]} <small style="display:inline;margin-left:4px;font-weight:400">${s.baseExposure}× 常态</small></strong><small>${riskDescriptions[s.risk]}</small></div><span>当前 ${fmt(s.exposure,2)}×</span><span class="risk-more">查看策略 ↗</span></button>`).join('');
-  $$('[data-risk]').forEach(button=>button.addEventListener('click',()=>{selection.risk=button.dataset.risk;historySource='original';render();strategyDetails.open(selected(),`[data-risk="${selection.risk}"]`);}));
+  renderAllocation();
+  renderHistory();
+}
+
+function renderAllocation() {
+  $$('[data-family]').forEach(button=>{const active=button.dataset.family===allocationFamily;button.classList.toggle('active',active);button.setAttribute('aria-pressed',active);});
+  const current=selectedAllocation(),custom=allocationFamily==='custom';
+  const options=$('#risk-options');
+  options.dataset.strategyFamily=allocationFamily;
+  const choices=custom?(current?[current]:[]):DATA.strategies.filter(s=>s.family===selection.family);
+  options.innerHTML=choices.map(s=>{
+    const active=s.id===current.id,title=custom?s.name:riskNames[s.risk],description=custom?'':riskDescriptions[s.risk];
+    return `<button class="risk-option ${active?'active':''}" data-allocation-strategy="${s.id}" aria-haspopup="dialog" aria-controls="strategy-dialog" aria-pressed="${active}"><div><strong>${escapeHTML(title)} <small style="display:inline;margin-left:4px;font-weight:400">${s.baseExposure}× 常态</small></strong>${description?`<small>${description}</small>`:''}</div><span>当前 ${fmt(s.exposure,2)}×</span><span class="risk-more">查看策略 ↗</span></button>`;
+  }).join('');
+  if(!current)options.innerHTML=`<p class="forward-meta" role="status">${registeredStrategy?escapeHTML(registeredStrategy.name)+' · ':''}等待已核验的目标仓位</p>`;
+  $$('[data-allocation-strategy]').forEach(button=>button.addEventListener('click',()=>{
+    const s=choices.find(s=>s.id===button.dataset.allocationStrategy);
+    if(!custom){selection.risk=s.risk;historySource='original';render();}
+    strategyDetails.open(s,`[data-allocation-strategy="${s.id}"]`);
+  }));
+  $('#open-strategy-details').disabled=!current;
+  $('#allocation-grid').hidden=!current;
+  if(current)renderAllocationDetails(current);
+  renderHoldings(current);
+}
+
+function renderAllocationDetails(current) {
   $('#allocation-title').textContent = displayName(current);
   $('#allocation-date').textContent = `信号日 ${current.signalDate || DATA.meta.signalDate} · ${current.liveStatus==='blocked'?'保留最后完整结果':'次日收盘成交'}`;
   $('#position-status').textContent = current.exposure === 0 ? '风控 · 防守' : current.exposure < 0 ? '风控 · 反向' : current.exposure < current.baseExposure ? '风控 · 减仓' : '常态持有';
   $('#position-status').className = 'tag '+(current.exposure===0?'amber':'green');
   $('#exposure-value').textContent = `${fmt(current.exposure,2)}×`;
   $('#underlying-label').textContent = current.exposure===0?'BIL 现金类持仓':(current.selection==='SOXX'?'半导体底层敞口':'纳指底层敞口');
-  const equity = current.holdings.reduce((sum,h)=>sum+h.weight,0);
+  const equity = Math.min(1,current.holdings.reduce((sum,h)=>sum+h.weight,0));
   $('#allocation-donut').style.background = `conic-gradient(var(--green) ${equity*100}%, var(--cash) ${equity*100}% 100%)`;
-  $('#allocation-legend').innerHTML = current.holdings.map(h=>`<div class="allocation-item"><div class="allocation-item-top"><span><i></i>${h.symbol}</span><strong>${weight(h.weight)}</strong></div><p>${Math.abs(h.leverage)}倍${h.underlying==='SOXX'?'半导体':'纳指'}${h.leverage<0?'反向':''}工具 · 资金权重</p></div>`).join('')+`<div class="allocation-item cash"><div class="allocation-item-top"><span><i></i>BIL</span><strong>${weight(current.cash)}</strong></div><p>现金类工具 · 资金权重</p></div>`;
-  $('#exposure-formula').textContent = current.holdings.length ? `${holdingText(current)} × ${current.holdings[0].leverage} ≈ ${fmt(current.exposure,2)}倍` : '权益工具 0% → 底层敞口 0倍';
+  $('#allocation-legend').innerHTML = current.holdings.map(h=>`<div class="allocation-item"><div class="allocation-item-top"><span><i></i>${h.symbol}</span><strong>${weight(h.weight)}</strong></div><p>${Math.abs(h.leverage)}倍${h.underlying==='SOXX'?'半导体':'纳指'}${h.leverage<0?'反向':''}工具 · 资金权重</p></div>`).join('')+`<div class="allocation-item cash"><div class="allocation-item-top"><span><i></i>${current.cash<0?'融资负债':'BIL'}</span><strong>${weight(Math.abs(current.cash))}</strong></div><p>${current.cash<0?'占净资产比例':'现金类工具 · 资金权重'}</p></div>`;
+  $('#exposure-formula').textContent = current.configSnapshot?current.formula:
+    current.holdings.length?`${holdingText(current)} × ${current.holdings[0].leverage} ≈ ${fmt(current.exposure,2)}倍`:'权益工具 0% → 底层敞口 0倍';
   renderReasons(current);
-  renderHoldings(current);
-  renderHistory();
 }
 
 function renderHoldings(current){
   const registered=registeredAllocation();
   const strategies=registered?[...DATA.strategies,registered]:DATA.strategies;
-  $('#holdings-table').innerHTML = strategies.map(s=>`<tr tabindex="0" role="button" data-strategy="${s.id}" class="${s.id===current.id?'selected':''}" aria-haspopup="dialog" aria-controls="strategy-dialog" aria-label="查看${escapeHTML(displayName(s))}的具体策略、仓位与依据"><td>${escapeHTML(displayName(s))}${s.id===current.id?'<span class="row-arrow">↗</span>':''}</td><td>${holdingText(s)}</td><td>${s.cash<0?'融资 '+weight(-s.cash):weight(s.cash)}</td><td><strong>${fmt(s.exposure,2)}×</strong></td><td>${escapeHTML(s.signalDate || DATA.meta.signalDate)}</td><td>${escapeHTML(s.reasons.filter(r=>r.active&&r!==s.reasons[0]&&r.title).map(r=>r.title).join('、') || s.state)}</td></tr>`).join('');
+  $('#holdings-table').innerHTML = strategies.map(s=>{
+    const active=s.id===current?.id;
+    return `<tr tabindex="0" role="button" data-strategy="${s.id}" class="${active?'selected':''}" aria-haspopup="dialog" aria-controls="strategy-dialog" aria-label="查看${escapeHTML(displayName(s))}的具体策略、仓位与依据"><td>${escapeHTML(displayName(s))}${active?'<span class="row-arrow">↗</span>':''}</td><td>${holdingText(s)}</td><td>${s.cash<0?'融资 '+weight(-s.cash):weight(s.cash)}</td><td><strong>${fmt(s.exposure,2)}×</strong></td><td>${escapeHTML(s.signalDate || DATA.meta.signalDate)}</td><td>${escapeHTML(s.reasons.filter(r=>r.active&&r!==s.reasons[0]&&r.title).map(r=>r.title).join('、') || s.state)}</td></tr>`;
+  }).join('');
   if(registeredStrategy&&!registered)$('#holdings-table').insertAdjacentHTML('beforeend',`<tr><td>${escapeHTML(registeredStrategy.name)}</td><td colspan="5">等待已核验的目标仓位</td></tr>`);
   $$('[data-strategy]').forEach(row=>{
     const activate=()=>{
       const s=strategies.find(s=>s.id===row.dataset.strategy);
-      if(!s.configSnapshot){selection.family=s.family;selection.risk=s.risk;historySource='original';render();}
+      allocationFamily=s.configSnapshot?'custom':s.family;
+      if(s.configSnapshot)renderAllocation();
+      else{selection.family=s.family;selection.risk=s.risk;historySource='original';render();}
       strategyDetails.open(s,`[data-strategy="${s.id}"]`);
     };
     row.addEventListener('click',activate);
@@ -136,10 +174,16 @@ function renderHoldings(current){
 }
 
 function renderReasons(s) {
+  if(s.configSnapshot){
+    const [first,...rest]=s.reasons;
+    $('#reason-list').innerHTML=`<div class="reason active"><div><h4>${escapeHTML(s.state)}</h4><p>${escapeHTML(first?.detail??'')}</p></div></div>`+
+      (rest.length?`<details class="all-rules"><summary>查看其余持仓依据 <span>＋</span></summary><div>${rest.map(r=>`<p>${escapeHTML(r.detail)}</p>`).join('')}</div></details>`:'');
+    $('#reason-result').textContent=`→  ${s.formula}`;
+    return;
+  }
   const base = s.reasons[0];
   const creditReasons=s.reasons.filter(r=>r.active && r!==base && !['红点窗口','黄点锁仓'].includes(r.title));
   const timingActive=s.reasons.some(r=>['红点窗口','黄点锁仓'].includes(r.title) && r.matched);
-  const adjusted=s.exposure!==s.baseExposure;
   const steps=[
     {title:s.family==='simple'?'从纳指常态敞口出发':'月度动量选品，确定常态敞口',detail:base.detail,active:false,status:'基准'},
     {title:timingActive?'最优拟合：当前有离场约束':'最优拟合：当前允许参与',detail:(s.reasons.find(r=>r.title==='红点窗口')?.detail || '') + ' ' + (s.reasons.find(r=>r.title==='黄点锁仓')?.detail || ''),active:timingActive,status:timingActive?'条件命中':'未限制'},
