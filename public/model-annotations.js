@@ -103,8 +103,6 @@
       html+='</div>';
       const signalDates=[...new Set(executions.map(t=>t.signalDate).filter(Boolean))];
       html+=`<p class="annotation-tooltip-note">信号日 ${escape(signalDates.join(' / ')||'—')} → ${escape(date)} 收盘成交；权重比较为当日收益后、调仓前后。</p>`;
-      const rebalances=executions.filter(trade=>trade.rebalanceOnly||trade.reason==='rebalancing_band');
-      if(rebalances.length){const bands=[...new Set(rebalances.map(t=>Number(((t.band??.05)*100).toFixed(4))))];html+=`<p class="annotation-tooltip-note">沿用原目标；资金权重漂移触及${bands.join(' / ')}个百分点再平衡带，触发本次调仓。</p>`;}
     }
     if(entry.events.length){
       html+='<div class="annotation-tooltip-title">当日模型标记</div><ul class="annotation-tooltip-events">';

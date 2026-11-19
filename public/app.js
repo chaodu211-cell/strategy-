@@ -192,7 +192,7 @@ function renderReasons(s) {
 function loadHistoryDetails() {
   if (historyLoadState !== 'idle') return;
   historyLoadState = 'loading';
-  fetch('./history-positions.json'+(researchVersion?'?v='+encodeURIComponent(researchVersion):'')).then(r => {if(!r.ok)throw new Error('历史持仓读取失败');return r.json();}).then(data => {
+  fetch('./history-positions.json?v='+encodeURIComponent((researchVersion||'')+'-trade-reasons')).then(r => {if(!r.ok)throw new Error('历史持仓读取失败');return r.json();}).then(data => {
     if(data.schemaVersion !== 1 || !data.strategies || (researchVersion&&data.meta?.researchVersion!==researchVersion))throw new Error('历史持仓格式无效');
     HISTORY_DETAILS=data;historyLoadState='ready';renderHistory();
   }).catch(error => {historyLoadState='error';renderHistory();});
@@ -465,7 +465,8 @@ function drawChart(series,benchmark,details,drawdowns,collection,annotations,cus
     $('#hover-line').setAttribute('x1',x(p.date));$('#hover-line').setAttribute('x2',x(p.date));$('#hover-line').setAttribute('visibility','visible');
     $('#hover-dot').setAttribute('cx',x(p.date));$('#hover-dot').setAttribute('cy',y(p.value));$('#hover-dot').setAttribute('visibility','visible');
     if(index!==activeIndex||tooltip.hidden){
-      const trade=entry?.trades[0],change=trade?{trade,previous:details?.points[trade.signalDate]}:null;
+      const trade=entry?.executions[0];
+      const change=trade?{trade,previous:detail?.previousTarget??details?.points[trade.signalDate]}:null;
       const annotationsHTML=ModelAnnotations.tooltipHTML(p.date,collection,annotations?.readings?.[p.date]);
       tooltip.innerHTML='<div class="tooltip-pin-bar"><span>点击图中点位固定详情，可滚动阅读</span><button type="button" data-close-chart-detail aria-label="关闭历史详情">×</button></div>'+HistoryChart.tooltipHTML(p,b.value,detail,drawdowns,historyLoadState,annotationsHTML,customConfig,change);
       tooltip.scrollTop=0;

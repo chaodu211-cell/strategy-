@@ -36,7 +36,7 @@ assert.deepEqual(Array.from(M.collect(null,details,null,['buy']).trades),[revers
 assert.equal(all.counts.reduce,0);
 assert.equal(all.counts.sell,1);
 assert.ok(!all.dates.includes(drift[0].date));
-assert.match(M.tooltipHTML(drift[0].date,all),/沿用原目标/);
+assert.equal(all.byDate[drift[0].date].executions[0],drift[0]);
 assert.match(M.tooltipHTML(rotation[0].date,all),/卖出 SOXL.*买入 TQQQ/);
 assert.equal(JSON.stringify(details),snapshot);
 
@@ -44,6 +44,37 @@ const change={trade:reversal[0],previous:{state:'常态'}};
 const marked=H.tooltipHTML({date:point.date,value:1},1,point,null,'ready','<div>成交明细</div>',config,change);
 assert.match(marked,/仓位变动原因.*1\.00× → -1\.00×.*常态 → 空心红点.*清仓至BIL.*成交明细/);
 assert.equal(marked.match(/信号依据/g).length,1);
+
+const renderChange=(next,previous,trade,custom=config)=>H.tooltipHTML({date:next.date,value:1},1,next,null,'ready','',custom,{trade,previous});
+const ordinary={...point,state:'常态',targetExposure:1,activeRules:[],winningRule:null};
+const redBefore={...point,state:'空心红点',targetExposure:0,activeRules:['red_ad'],winningRule:'red_ad'};
+const reopened=renderChange(ordinary,redBefore,{signalDate:point.signalDate,exposureBefore:0,exposureAfter:1});
+assert.match(reopened,/规则目标敞口.*0\.00× → 1\.00×.*空心红点的有效期结束/);
+assert.doesNotMatch(renderChange({...ordinary,activeRules:['red_ad']},redBefore,{exposureBefore:0,exposureAfter:1}),/有效期结束/);
+const blueBefore={...blue,blueLadder:{...blue.blueLadder,count:8,target:3.2}};
+assert.match(renderChange(blue,blueBefore,{exposureBefore:1,exposureAfter:.625}),/实心蓝点日数 8 → 7/);
+const resolved={...ordinary,drawdownGate:{active:false,drawdown:-.095,releaseDate:point.signalDate}};
+assert.match(renderChange(resolved,gated,{exposureBefore:1.5,exposureAfter:3}),/参考净值回撤修复至 -9\.50%，回撤闸解除/);
+const afterCap={...ordinary,cccStressBlueLimit:{active:false}};
+assert.match(renderChange(afterCap,blue,{exposureBefore:.625,exposureAfter:1}),/CCC 信用压力解除/);
+const driftHTML=renderChange(ordinary,redBefore,{exposureBefore:.82,exposureAfter:1,reason:'rebalancing_band',band:.06});
+assert.match(driftHTML,/沿用原目标.*6 个百分点再平衡带/);
+assert.doesNotMatch(driftHTML,/空心红点|规则目标敞口/);
+
+const archive=JSON.parse(fs.readFileSync(new URL('../public/history-positions.json',import.meta.url)));
+function renderOriginalTrade(id,date){
+  const style=archive.strategies[id],next=style.points[date],trade=style.trades.find(t=>t.date===date);
+  return renderChange({...next,date},next.previousTarget??style.points[trade.signalDate],trade,null);
+}
+for(const style of Object.values(archive.strategies)){
+  for(const trade of style.trades.filter(t=>!t.rebalanceOnly)){
+    assert.ok(style.points[trade.date].previousTarget??style.points[trade.signalDate], `Missing prior target for ${trade.date}`);
+  }
+}
+assert.match(renderOriginalTrade('simple-conservative','2009-10-16'),/红点有效窗口结束/);
+assert.match(renderOriginalTrade('simple-conservative','2007-07-16'),/CCC 利差回到 200 日均线或以下/);
+assert.match(renderOriginalTrade('simple-conservative','2007-09-04'),/黄点锁仓解除：QQQ 距 52 周高点/);
+assert.match(renderOriginalTrade('fitted-aggressive','2007-08-02'),/SOXX 当时没有符合策略可交易条件的多头 ETF/);
 
 const momentumConfig={...config,asset:'momentum'};
 const momentum=structuredClone(point);

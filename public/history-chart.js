@@ -73,12 +73,12 @@
     return {dates:[...daily.dates,...dates],nav:[...original.nav,...tail.nav],benchmark:[...daily.benchmark,...extension.benchmark],
       detail:{...detail,points:{...detail.points,...tail.points},trades:[...detail.trades,...tail.trades]},signalThrough:extension.signalThrough};
   }
+  const customRuleLabels={red:'实心红点',red_ad:'空心红点',blue:'实心蓝点',blue_soft:'空心蓝点',yellow:'黄点预警',ccc_top:'CCC 见顶预警',ccc_bot:'CCC 见底预警',ccc_stress:'信用压力（分位≥95）',ccc_above:'利差高于200日线',triangle:'vix反转'};
   function customReasons(detail, config) {
     const n=value=>Number.isFinite(value)?String(Number(value.toFixed(2))):'—';
     const x=value=>`${n(value)}倍`,p=value=>`${n(value*100)}%`;
-    const labels={red:'实心红点',red_ad:'空心红点',blue:'实心蓝点',blue_soft:'空心蓝点',yellow:'黄点预警',ccc_top:'CCC 见顶预警',ccc_bot:'CCC 见底预警',ccc_stress:'信用压力（分位≥95）',ccc_above:'利差高于200日线',triangle:'vix反转'};
     const base=String(detail.state||'常态').split(' · ')[0],rules=config.rules||[];
-    const rule=rules.find(r=>labels[r.id]===base),ladder=detail.blueLadder,credit=detail.creditStack;
+    const rule=rules.find(r=>customRuleLabels[r.id]===base),ladder=detail.blueLadder,credit=detail.creditStack;
     const reasons=[],source=detail.reasons||[];
     const partialGate=detail.bearGate?.applied&&detail.bearGate.method==='ensemble'&&detail.bearGate.multiplier>0;
     if(detail.bearGate?.applied&&!partialGate)reasons.push(detail.bearGate.method==='ensemble'?'熊市闸门（四类投票）：四类趋势信号全部看空，常态多头归零。':'熊市闸门：QQQ低于200日线且均线下行，常态多头归零。');
@@ -125,6 +125,82 @@
     if(tool)reasons.push(`工具限制：期望 ${tool[1]}，可实现 ${tool[2]}。`);
     return reasons;
   }
+  function customTransitions(previous, detail, config) {
+    const reasons=[],oldRule=previous.winningRule;
+    const oldRuleWasUsed=previous.creditStack?.selected||previous.state?.split(' · ')[0]===customRuleLabels[oldRule];
+    if(oldRule&&oldRule!=='yellow'&&oldRuleWasUsed&&detail.activeRules&&!detail.activeRules.includes(oldRule)){
+      const label=customRuleLabels[oldRule]||oldRule;
+      const window=oldRule==='blue'&&config.rules?.find(rule=>rule.id===oldRule)?.action==='blue_ladder'?'40 日滚动窗口':'有效期';
+      reasons.push(oldRule==='ccc_stress'||oldRule==='ccc_above'?`${label}条件退出。`:`${label}的${window}结束。`);
+    }
+    if(detail.vixReversalSignalDate&&detail.vixReversalSignalDate!==previous.vixReversalSignalDate){
+      reasons.push(`vix反转信号于 ${detail.vixReversalSignalDate} 生效，一次性调整至抄底目标。`);
+    }
+    const oldLadder=previous.blueLadder,ladder=detail.blueLadder;
+    if(oldLadder?.selected&&ladder?.selected&&oldLadder.target!==ladder.target&&oldLadder.count!==ladder.count){
+      reasons.push(`最近 40 个交易日的实心蓝点日数 ${oldLadder.count} → ${ladder.count}，分批目标 ${multiple(oldLadder.target)} → ${multiple(ladder.target)}。`);
+    }
+    if(previous.creditStack?.selected&&!detail.creditStack?.selected){
+      reasons.push('退出 CCC 见顶与信用状态的累乘配置。');
+    }
+    const oldBear=previous.bearGate,bear=detail.bearGate;
+    if(oldBear?.applied&&bear?.method==='ensemble'){
+      const next=bear.applied?bear.multiplier:1;
+      if((bear.applied||!bear.active)&&oldBear.multiplier!==next){
+        reasons.push(`熊市闸门看多票占比变化，常态多头乘数 ${multiple(oldBear.multiplier)} → ${multiple(next)}。`);
+      }
+    }else if(oldBear?.applied&&bear?.ready&&!bear.active){
+      reasons.push(`熊市闸门解除，${bear.below?'200 日均线停止下行':'QQQ 收盘不再低于 200 日均线'}。`);
+    }
+    const gate=detail.drawdownGate;
+    if(previous.drawdownGate?.applied&&gate?.releaseDate===detail.signalDate&&!gate.active){
+      reasons.push(`参考净值回撤修复至 ${percent(gate.drawdown)}，回撤闸解除。`);
+    }
+    const oldCap=previous.cccStressBlueLimit,cap=detail.cccStressBlueLimit;
+    if(oldCap?.applied&&cap){
+      if(!cap.active)reasons.push('CCC 信用压力解除，撤销多头波动率上限。');
+      else if(cap.applied&&Math.abs(oldCap.cap-cap.cap)>1e-9){
+        reasons.push(`CCC 波动率上限 ${multiple(oldCap.cap)} → ${multiple(cap.cap)}。`);
+      }
+    }
+    return reasons;
+  }
+  const originalRuleExits=[
+    [/红点距今|^红点窗口：/,'红点有效窗口结束。'],
+    [/CCC 利差 .*高于200日均线|^CCC 高于 200 日线：/,'CCC 利差回到 200 日均线或以下。'],
+    [/CCC 252日分位|^CCC 压力阶段：/,'CCC 利差分位回落至 95 以下，解除信用压力减仓。'],
+    [/CCC 见顶预警距今|^CCC 见顶预警窗口：/,'CCC 见顶预警有效窗口结束。'],
+    [/熊市闸门[：:]/,'熊市闸门条件解除。'],
+    [/回撤闸生效|^组合回撤闸：/,'参考净值回撤达到修复阈值，回撤闸解除。'],
+  ];
+  function originalTransitions(previous, detail) {
+    const oldState=previous.state,state=detail.state;
+    if(detail.yellowRelease&&oldState==='黄点锁仓')return [`黄点锁仓解除：${detail.yellowRelease}。`];
+    if(state==='抄底'||state==='黄点锁仓')return [];
+    if(oldState==='黄点锁仓')return ['黄点锁仓解除，按当前有效配置重新确定仓位。'];
+    if(oldState==='抄底')return ['退出抄底配置，按当前有效规则重新确定仓位。'];
+    if(!previous.reasons||!detail.reasons)return [];
+    return originalRuleExits.flatMap(([pattern,reason])=>
+      previous.reasons.some(text=>pattern.test(text))&&!detail.reasons.some(text=>pattern.test(text))?[reason]:[]);
+  }
+  function positionChangeReasons(detail, config, {trade,previous}) {
+    if(trade.rebalanceOnly||trade.reason==='rebalancing_band'){
+      const band=Number(((trade.band??detail.band??.05)*100).toFixed(4));
+      return [`沿用原目标；资金权重漂移达到再平衡条件（${band} 个百分点再平衡带）。`];
+    }
+    if(!previous)return [];
+    const reasons=config?customTransitions(previous,detail,config):originalTransitions(previous,detail);
+    const oldSymbols=previous.targetHoldings?.map(([symbol])=>symbol),newSymbols=detail.targetHoldings?.map(([symbol])=>symbol);
+    if(detail.unavailableAsset){
+      reasons.push(`${detail.unavailableAsset} 当时没有符合策略可交易条件的多头 ETF，目标转为 BIL。`);
+    }else if(previous.unavailableAsset&&detail.targetExposure>0&&newSymbols?.length){
+      reasons.push(`上一目标的 ${previous.unavailableAsset} 缺少符合条件的多头 ETF，本次以 ${newSymbols.map(symbolName).join(' / ')} 建仓。`);
+    }else if(previous.targetExposure>0&&detail.targetExposure>0&&oldSymbols?.length&&newSymbols?.length
+      &&oldSymbols.join()!==newSymbols.join()){
+      reasons.push(`目标 ETF 由 ${oldSymbols.map(symbolName).join(' / ')} 切换为 ${newSymbols.map(symbolName).join(' / ')}。`);
+    }
+    return reasons;
+  }
   function tooltipHTML(point, benchmarkValue, detail, drawdowns, loadState,annotationHTML='',customConfig=null,change=null) {
     const landmark = (drawdowns||[]).flatMap((d,i)=>{
       const place=point.date===d.troughDate?'谷底':point.date===d.peakDate?'峰值':'';
@@ -132,14 +208,22 @@
     }).join(' / ');
     let html = `<div class="hover-heading"><strong>${escape(point.date)}</strong>${landmark ? `<em>${landmark}</em>` : ''}</div><div class="hover-nav"><span>策略净值 <b>${multiple(point.value)}</b></span><span>QQQ <b>${multiple(benchmarkValue)}</b></span></div>`;
     if (!detail) return html + annotationHTML + `<p class="hover-note">${loadState === 'error' ? '历史持仓明细加载失败，可重试刷新页面。' : loadState==='ready'?'此交易日暂无存档持仓明细，可扩大区间查看邻近记录。':'正在加载历史持仓明细…'}</p>`;
-    const reasons=customConfig?customReasons(detail,customConfig):detail.reasons;
-    const reasonList=`<ul class="hover-reasons">${reasons.map(reason => `<li>${escape(reason)}</li>`).join('')}</ul>`;
-    const signalTitle=`信号依据 · ${escape(detail.signalDate)}`;
+    const evidence=customConfig?customReasons(detail,customConfig):detail.reasons??[];
+    const signalTitle=`信号依据 · ${escape(change?.trade.signalDate||detail.signalDate)}`;
+    let reasons=evidence;
     if(change){
       const {trade,previous}=change;
-      const stateChange=previous?.state&&previous.state!==detail.state?` · ${escape(previous.state)} → ${escape(detail.state)}`:'';
-      html+=`<div class="hover-basis-title">仓位变动原因 · ${signalTitle}</div><div class="hover-exposure">成交敞口 <strong>${multiple(trade.exposureBefore)} → ${multiple(trade.exposureAfter)}</strong>${stateChange}</div>${reasonList}`;
+      const driftOnly=trade.rebalanceOnly||trade.reason==='rebalancing_band';
+      const stateChange=!driftOnly&&previous?.state&&previous.state!==detail.state?` · ${escape(previous.state)} → ${escape(detail.state)}`:'';
+      const prior=previous?.targetExposure,next=detail.targetExposure;
+      const targetChange=!driftOnly&&Number.isFinite(prior)&&Number.isFinite(next)&&multiple(prior)!==multiple(next)
+        ?`<div class="hover-exposure">规则目标敞口 <strong>${multiple(prior)} → ${multiple(next)}</strong></div>`:'';
+      const transitions=positionChangeReasons(detail,customConfig,change);
+      reasons=driftOnly?transitions:[...transitions,...evidence];
+      html+=`<div class="hover-basis-title">仓位变动原因 · ${signalTitle}</div><div class="hover-exposure">成交敞口 <strong>${multiple(trade.exposureBefore)} → ${multiple(trade.exposureAfter)}</strong>${stateChange}</div>${targetChange}`;
     }
+    const reasonList=`<ul class="hover-reasons">${reasons.map(reason => `<li>${escape(reason)}</li>`).join('')}</ul>`;
+    if(change)html+=reasonList;
     html += annotationHTML;
     html += `<div class="hover-position-title"><span>回测收盘持仓</span><b>${escape(detail.state)}</b></div><div class="hover-holdings">`;
     for (const [symbol, weight] of [...detail.holdings, [detail.cash<0?'融资负债':'BIL', detail.cash]]) {

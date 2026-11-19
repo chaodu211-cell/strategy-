@@ -306,7 +306,7 @@
       }));
       allocationBreakdown={baseExposure:cfg.baseExposure,steps,skipped};
     }
-    return{weights,exposure,vixReversalSignalDate,drawdownGate,desired:requested,selection,momentum,blueLadder,blueComparison,creditStack,bearGate,cccStressBlueLimit,yellowLock,winner:winner?.id||null,state,reasons,limited,synthetic:!!tool?.synthetic,...(allocationBreakdown?{allocationBreakdown}:{})};
+    return{weights,exposure,vixReversalSignalDate,drawdownGate,desired:requested,selection,momentum,blueLadder,blueComparison,creditStack,bearGate,cccStressBlueLimit,yellowLock,winner:winner?.id||null,activeRules:active.map(rule=>rule.id),state,reasons,limited,synthetic:!!tool?.synthetic,...(allocationBreakdown?{allocationBreakdown}:{})};
   }
   function publishedTarget(data,t,target,configVersion){
     const {selection,state,reasons,allocationBreakdown,vixReversalSignalDate}=target;
@@ -551,7 +551,8 @@
       if(weights.some((w,j)=>w>1e-9&&data.symbols[j].synthetic))syntheticDays++;
       if(t===start)reasons.push('窗口首日收盘继承前一交易日目标，净值从1起算；首日不虚构成交，下一交易日起计收益和成本。');
       if(rebalanced&&rebalanceOnly)reasons.push(`目标不变，实际资金权重偏离超过 ${number(cfg.band*100)} 个百分点，按自定义再平衡带调仓。`);
-      points[date]={signalDate:data.dates[targetIndex(t-1)],state:target.state,selection:target.selection,holdings:weights.flatMap((w,j)=>j!==bil&&w>1e-9?[[data.symbols[j].symbol,w]]:[]),cash:weights[bil],exposure,targetHoldings:target.weights.flatMap((w,j)=>j!==bil&&w>1e-9?[[data.symbols[j].symbol,w]]:[]),targetCash:target.weights[bil],targetExposure:target.exposure,rebalanced,reasons,nav,benchmarkNav,band:cfg.band,rebalanceOnly,momentum:target.momentum,blueLadder:target.blueLadder,blueComparison:target.blueComparison,creditStack:target.creditStack,bearGate:target.bearGate,drawdownGate:target.drawdownGate,cccStressBlueLimit:target.cccStressBlueLimit,yellowLock:target.yellowLock,financingInterest,financingAnnualRate:FINANCING_RATE};
+      points[date]={signalDate:data.dates[targetIndex(t-1)],state:target.state,selection:target.selection,holdings:weights.flatMap((w,j)=>j!==bil&&w>1e-9?[[data.symbols[j].symbol,w]]:[]),cash:weights[bil],exposure,targetHoldings:target.weights.flatMap((w,j)=>j!==bil&&w>1e-9?[[data.symbols[j].symbol,w]]:[]),targetCash:target.weights[bil],targetExposure:target.exposure,rebalanced,reasons,nav,benchmarkNav,band:cfg.band,rebalanceOnly,momentum:target.momentum,blueLadder:target.blueLadder,blueComparison:target.blueComparison,creditStack:target.creditStack,bearGate:target.bearGate,drawdownGate:target.drawdownGate,cccStressBlueLimit:target.cccStressBlueLimit,yellowLock:target.yellowLock,financingInterest,financingAnnualRate:FINANCING_RATE,
+        winningRule:target.winner,activeRules:target.activeRules,vixReversalSignalDate:target.vixReversalSignalDate};
       history.push({date,nav});benchmark.push({date,nav:benchmarkNav});turnover.push(turn);
     }
     const metrics=stats(history,turnover),benchmarkMetrics=stats(benchmark,turnover.map(()=>0));
